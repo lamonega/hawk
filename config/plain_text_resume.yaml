@@ -1,0 +1,55 @@
+# plain_text_resume.yaml - Your resume in structured YAML format
+# Fill this in with your actual resume data
+
+personal_information:
+  name: ""
+  surname: ""
+  date_of_birth: ""
+  country: ""
+  city: ""
+  address: ""
+  zip_code: ""
+  phone_prefix: ""
+  phone: ""
+  email: ""
+  github: ""
+  linkedin: ""
+
+education_details:
+  - education_level: ""
+    institution: ""
+    field_of_study: ""
+    final_evaluation_grade: ""
+    start_date: ""
+    year_of_completion: 2024
+    exam: []
+
+experience_details:
+  - position: ""
+    company: ""
+    employment_period: ""
+    location: ""
+    industry: ""
+    key_responsibilities:
+      - description: ""
+    skills_acquired: []
+
+projects:
+  - name: ""
+    description: ""
+    link: ""
+
+achievements:
+  - name: ""
+    description: ""
+
+certifications:
+  - name: ""
+    description: ""
+
+languages:
+  - language: "English"
+    proficiency: "Professional"
+
+interests:
+  - ""

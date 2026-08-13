@@ -1,0 +1,48 @@
+# hawk settings - job search preferences
+linkedin:
+  # Easy Apply filter (f_AL=true is LinkedIn's parameter for Easy Apply)
+  easy_apply_only: true
+  # Job search filters
+  experience_levels:
+    - entry
+    - associate
+    - mid_senior_level
+  job_types:
+    full_time: true
+    contract: false
+    part_time: false
+    temporary: false
+    internship: false
+    other: false
+    volunteer: false
+  date_filter: month
+  positions:
+    - backend
+    - full stack
+  locations:
+    - remote
+  location_blacklist: []
+  distance: 25
+  company_blacklist: []
+  title_blacklist: []
+
+scoring:
+  # Minimum suitability score (1-10) to proceed with application
+  min_score: 7
+
+apply:
+  # Daily application cap
+  daily_max: 5
+  # Delay between steps in seconds (humanized with jitter)
+  min_delay: 2
+  max_delay: 6
+  # Dry run mode: extract + score but don't submit
+  dry_run: true
+
+browser:
+  # Browser profile directory (relative to project root)
+  profile_dir: profiles/linkedin
+  # Use stealth mode (invisible_playwright) if available
+  stealth: false
+  # Headless mode (set false for debugging)
+  headless: false
