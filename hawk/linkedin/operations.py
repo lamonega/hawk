@@ -44,6 +44,19 @@ _DETECT_FIELDS_JS = """
         }
     });
 
+    // Textareas
+    modal.querySelectorAll('textarea').forEach(el => {
+        const label = el.getAttribute('aria-label') ||
+                      el.closest('.jobs-easy-apply-form-section__group, .fb-dash-form-element, div[data-test-form-element]')?.querySelector('label')?.innerText ||
+                      el.getAttribute('placeholder') || el.name || '';
+        results.push({
+            type: 'textarea',
+            name: label.trim().split('\n')[0].trim(),
+            required: el.required || el.getAttribute('aria-required') === 'true',
+            value: el.value || '',
+        });
+    });
+
     // Selects
     modal.querySelectorAll('select').forEach(el => {
         const label = el.getAttribute('aria-label') ||
@@ -52,7 +65,7 @@ _DETECT_FIELDS_JS = """
         const options = Array.from(el.options).map(o => ({value: o.value, text: o.text}));
         results.push({
             type: 'select',
-            name: label.trim().split('\\n')[0].trim(),
+            name: label.trim().split('\n')[0].trim(),
             required: el.required || el.getAttribute('aria-required') === 'true',
             value: el.value,
             options: options,
