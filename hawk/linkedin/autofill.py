@@ -95,15 +95,13 @@ _AUTOFILL_EVALUATE_JS = r"""
             setInputValue(input, salVal);
             filled.push({ field: 'salary', value: salVal, label: label });
         } else if (label.includes('linkedin') || label.includes('perfil')) {
-            if (contact.linkedin) {
-                setInputValue(input, contact.linkedin);
-                filled.push({ field: 'linkedin', value: contact.linkedin, label: label });
-            }
-        } else if (label.includes('github') || label.includes('portfolio') || label.includes('web')) {
-            if (contact.github) {
-                setInputValue(input, contact.github);
-                filled.push({ field: 'github', value: contact.github, label: label });
-            }
+            const liVal = contact.linkedin || 'https://www.linkedin.com/in/lflamonega';
+            setInputValue(input, liVal);
+            filled.push({ field: 'linkedin', value: liVal, label: label });
+        } else if (label.includes('github') || label.includes('portfolio') || label.includes('web') || label.includes('site')) {
+            const gitVal = contact.github || 'https://github.com/lflamonega';
+            setInputValue(input, gitVal);
+            filled.push({ field: 'github', value: gitVal, label: label });
         } else if (input.required || input.getAttribute('aria-required') === 'true') {
             unknown.push({ type: 'text', label: label, name: input.name });
         }
@@ -116,7 +114,10 @@ _AUTOFILL_EVALUATE_JS = r"""
         let chosenVal = null;
         const options = Array.from(select.options);
 
-        if (label.includes('país') || label.includes('country') || label.includes('código de país') || label.includes('phone country')) {
+        const hasArgentina = options.find(o => o.text.trim().toLowerCase() === 'argentina' || o.text.includes('Argentina') || o.value.toLowerCase() === 'ar');
+        if (hasArgentina && !chosenVal) {
+            chosenVal = hasArgentina.value;
+        } else if (label.includes('país') || label.includes('country') || label.includes('código de país') || label.includes('phone country') || label.includes('residencia') || label.includes('location')) {
             const opt = options.find(o => o.value.toLowerCase() === 'ar' || o.text.toLowerCase().includes('argentina') || o.text.includes('+54'));
             if (opt) chosenVal = opt.value;
         } else if (label.includes('inglés') || label.includes('english') || label.includes('idioma') || label.includes('language')) {
@@ -138,7 +139,10 @@ _AUTOFILL_EVALUATE_JS = r"""
 
         if (chosenVal !== null) {
             select.value = chosenVal;
+            select.selectedIndex = options.findIndex(o => o.value === chosenVal);
+            select.dispatchEvent(new Event('input', { bubbles: true }));
             select.dispatchEvent(new Event('change', { bubbles: true }));
+            select.dispatchEvent(new Event('blur', { bubbles: true }));
             filled.push({ field: 'select', value: chosenVal, label: label });
         } else if (!select.value && (select.required || select.getAttribute('aria-required') === 'true')) {
             unknown.push({ type: 'select', label: label, options: options.map(o => o.text) });

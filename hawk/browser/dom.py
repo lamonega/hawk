@@ -27,76 +27,115 @@ async def snapshot() -> str:
     - url: current page URL
     - title: page title
     - elements: indexed list of interactive elements with their properties
+async def snapshot() -> str:
+    """Take an accessibility tree snapshot of the current page.
+
+    Assigns a unique 'data-hawk-id' attribute to every interactive element in the DOM
+    so that click, type, and select actions are 100% deterministic and error-free.
+
+    Returns:
+        JSON string with page URL, title, and indexed interactive elements.
     """
     page = get_page()
     if page is None:
         return json.dumps({"error": "Browser not started"})
 
     try:
-        # Extract interactive elements via JS
+        # Extract and tag interactive elements in the DOM
         raw_elements = await page.evaluate(
-            """
+            r"""
             () => {
                 const selectors = [
-                    'a[href]',
                     'button',
                     'input:not([type=hidden])',
                     'select',
                     'textarea',
+                    'a[href]',
                     '[role=button]',
-                    '[role=link]',
-                    '[role=tab]',
-                    '[role=menuitem]',
-                    '[role=option]',
                     '[role=combobox]',
                     '[role=textbox]',
                     '[role=checkbox]',
                     '[role=radio]',
-                    '[tabindex]',
-                    '[contenteditable=true]',
+                    '[tabindex="0"]',
                 ];
+
                 const seen = new Set();
                 const results = [];
+                let hawkIndex = 0;
 
-                for (const sel of selectors) {
-                    for (const el of document.querySelectorAll(sel)) {
-                        if (seen.has(el)) continue;
-                        seen.add(el);
+                // Priority: active modal first, then rest of document
+                const modal = document.querySelector('.jobs-easy-apply-modal') ||
+                              document.querySelector('[role="dialog"]') ||
+                              document.querySelector('.artdeco-modal');
+                const rootNodes = modal ? [modal, document.body] : [document.body];
 
-                        const tag = el.tagName.toLowerCase();
-                        const role = el.getAttribute('role') ||
-                                      (tag === 'a' ? 'link' :
-                                       tag === 'button' ? 'button' :
-                                       tag === 'input' ? el.type || 'textbox' :
-                                       tag === 'select' ? 'combobox' :
-                                       tag === 'textarea' ? 'textbox' : tag);
+                for (const root of rootNodes) {
+                    for (const sel of selectors) {
+                        for (const el of root.querySelectorAll(sel)) {
+                            if (seen.has(el)) continue;
+                            seen.add(el);
 
-                        const labelEl = el.labels && el.labels[0] ? el.labels[0] : el.closest('div, .fb-dash-form-element, section')?.querySelector('label');
-                        const name = el.getAttribute('aria-label') ||
-                                      el.getAttribute('title') ||
-                                      (labelEl ? labelEl.innerText?.trim() : '') ||
-                                      el.innerText?.trim().substring(0, 100) ||
-                                      el.getAttribute('placeholder') ||
-                                      el.getAttribute('name') ||
-                                      '';
+                            // Tag element with data-hawk-id for reliable Playwright targeting
+                            const currentIndex = hawkIndex++;
+                            el.setAttribute('data-hawk-id', String(currentIndex));
 
-                        const id = el.id || '';
-                        const value = el.value || el.getAttribute('value') || '';
-                        const disabled = el.disabled || el.getAttribute('aria-disabled') === 'true';
-                        const readonly = el.readOnly || el.getAttribute('aria-readonly') === 'true';
-                        const href = el.getAttribute('href') || '';
+                            const tag = el.tagName.toLowerCase();
+                            const role = el.getAttribute('role') ||
+                                          (tag === 'a' ? 'link' :
+                                           tag === 'button' ? 'button' :
+                                           tag === 'input' ? el.type || 'textbox' :
+                                           tag === 'select' ? 'combobox' :
+                                           tag === 'textarea' ? 'textbox' : tag);
 
-                        results.push({
-                            tag: tag,
-                            id: id,
-                            role: role,
-                            name: name,
-                            value: value,
-                            disabled: disabled,
-                            readonly: readonly,
-                            href: href,
-                            type: el.type || '',
-                        });
+                            // Precision label extraction
+                            let cleanLabel = '';
+                            if (el.id) {
+                                const labelFor = document.querySelector(`label[for="${el.id}"]`);
+                                if (labelFor) cleanLabel = labelFor.innerText;
+                            }
+                            if (!cleanLabel && el.labels && el.labels[0]) {
+                                cleanLabel = el.labels[0].innerText;
+                            }
+                            if (!cleanLabel) {
+                                const parent = el.closest('.jobs-easy-apply-form-section__group, .fb-dash-form-element, div[data-test-form-element], fieldset, tr') || el.parentElement;
+                                const parentLabel = parent ? parent.querySelector('label, legend, .fb-dash-form-element__label, dt, th') : null;
+                                if (parentLabel) cleanLabel = parentLabel.innerText;
+                            }
+                            if (!cleanLabel) {
+                                cleanLabel = el.getAttribute('aria-label') ||
+                                             el.getAttribute('placeholder') ||
+                                             el.getAttribute('title') ||
+                                             (tag === 'button' || tag === 'a' ? el.innerText : '') ||
+                                             el.name ||
+                                             '';
+                            }
+
+                            // Clean up multiline text / options pollution in select labels
+                            cleanLabel = cleanLabel.split('\n')[0].replace(/\s+/g, ' ').trim().slice(0, 120);
+
+                            const id = el.id || '';
+                            let value = el.value || el.getAttribute('value') || '';
+                            if (tag === 'select' && el.selectedIndex >= 0 && el.options[el.selectedIndex]) {
+                                value = el.options[el.selectedIndex].text.trim();
+                            }
+
+                            const disabled = el.disabled || el.getAttribute('aria-disabled') === 'true';
+                            const readonly = el.readOnly || el.getAttribute('aria-readonly') === 'true';
+                            const href = el.getAttribute('href') || '';
+
+                            results.push({
+                                index: currentIndex,
+                                tag: tag,
+                                id: id,
+                                role: role,
+                                name: cleanLabel,
+                                value: value,
+                                disabled: disabled,
+                                readonly: readonly,
+                                href: href,
+                                type: el.type || '',
+                            });
+                        }
                     }
                 }
                 return results;
@@ -104,32 +143,17 @@ async def snapshot() -> str:
             """
         )
 
-        elements = []
-        for i, el in enumerate(raw_elements):
-            elements.append({
-                "index": i,
-                "tag": el.get("tag", ""),
-                "id": el.get("id", ""),
-                "role": el.get("role", ""),
-                "name": el.get("name", ""),
-                "value": el.get("value", ""),
-                "disabled": el.get("disabled", False),
-                "readonly": el.get("readonly", False),
-                "href": el.get("href", ""),
-                "type": el.get("type", ""),
-            })
-
         result = {
             "url": page.url,
             "title": await page.title(),
-            "elements": elements,
+            "elements": raw_elements,
         }
 
-        # Store for later use in persistent driver state
+        # Store in persistent driver state
         driver_state._last_snapshot = result
-        driver_state._last_elements = elements
+        driver_state._last_elements = raw_elements
 
-        logger.debug("Snapshot: {} elements on {}", len(elements), page.url)
+        logger.debug("Snapshot: {} elements on {}", len(raw_elements), page.url)
         return json.dumps(result, indent=2)
 
     except Exception as e:
@@ -145,82 +169,6 @@ def get_element_by_index(index: int) -> dict | None:
     return elems[index]
 
 
-async def _find_locator_for_element(page: Page, element: dict) -> Any | None:
-    """Find a Playwright locator for an element from snapshot data."""
-    name = element.get("name", "")
-    tag = element.get("tag", "")
-    el_id = element.get("id", "")
-    href = element.get("href", "")
-    role = element.get("role", "")
-    el_type = element.get("type", "")
-
-    # By ID
-    if el_id:
-        try:
-            loc = page.locator(f"#{el_id}").first
-            if await loc.count() > 0:
-                return loc
-        except Exception:
-            pass
-
-    # For links with href, navigate directly
-    if tag == "a" and href:
-        try:
-            return page.locator(f'a[href="{href}"]').first
-        except Exception:
-            pass
-
-    # For tel inputs
-    if tag == "input" and el_type == "tel":
-        try:
-            loc = page.locator('input[type="tel"]').first
-            if await loc.count() > 0:
-                return loc
-        except Exception:
-            pass
-
-    # For file inputs
-    if tag == "input" and el_type == "file":
-        try:
-            return page.locator("input[type=file]").first
-        except Exception:
-            pass
-
-    # Try label / name
-    if name:
-        try:
-            locator = page.get_by_label(name, exact=False)
-            if await locator.count() > 0:
-                return locator.first
-        except Exception:
-            pass
-
-        try:
-            locator = page.get_by_role(role, name=name, exact=False)
-            if await locator.count() > 0:
-                return locator.first
-        except Exception:
-            pass
-
-        try:
-            locator = page.get_by_text(name, exact=False)
-            if await locator.count() > 0:
-                return locator.first
-        except Exception:
-            pass
-
-    # Fallback by tag and type
-    if tag == "input" and el_type:
-        try:
-            loc = page.locator(f'input[type="{el_type}"]').first
-            if await loc.count() > 0:
-                return loc
-        except Exception:
-            pass
-
-    return None
-
-
 async def click_element(element_index: int) -> str:
     """Click an element by its index from the last snapshot."""
     page = get_page()
@@ -231,19 +179,40 @@ async def click_element(element_index: int) -> str:
     if element is None:
         return f"error: Element index {element_index} not found in last snapshot"
 
-    locator = await _find_locator_for_element(page, element)
-    if locator is None:
-        return f"error: Could not find locator for element '{element.get('name', '')}'"
-
+    # Strategy 1: Target by data-hawk-id
     try:
-        await locator.click(timeout=5000)
-        return f"Clicked: {element.get('role', '')} '{element.get('name', '')}'"
-    except Exception as e:
-        return f"error clicking: {e}"
+        loc = page.locator(f'[data-hawk-id="{element_index}"]').first
+        if await loc.count() > 0:
+            await loc.scroll_into_view_if_needed()
+            await loc.click(timeout=4000)
+            return f"Clicked: {element.get('role', '')} '{element.get('name', '')}'"
+    except Exception:
+        pass
+
+    # Strategy 2: Native JS click via data-hawk-id
+    try:
+        clicked = await page.evaluate(f"""
+            () => {{
+                const el = document.querySelector('[data-hawk-id="{element_index}"]');
+                if (el) {{
+                    el.scrollIntoView({{ block: 'center' }});
+                    el.focus();
+                    el.click();
+                    return true;
+                }}
+                return false;
+            }}
+        """)
+        if clicked:
+            return f"Clicked (native JS): {element.get('role', '')} '{element.get('name', '')}'"
+    except Exception:
+        pass
+
+    return f"error: Could not click element {element_index} ('{element.get('name', '')}')"
 
 
 async def type_element(element_index: int, text: str, clear: bool = False) -> str:
-    """Type text into an element by its index."""
+    """Type text into an input or textarea by its index."""
     page = get_page()
     if page is None:
         return "error: Browser not started"
@@ -252,21 +221,45 @@ async def type_element(element_index: int, text: str, clear: bool = False) -> st
     if element is None:
         return f"error: Element index {element_index} not found in last snapshot"
 
-    locator = await _find_locator_for_element(page, element)
-    if locator is None:
-        return f"error: Could not find locator for element '{element.get('name', '')}'"
-
+    # Strategy 1: Playwright locator with data-hawk-id
     try:
-        if clear:
-            await locator.fill("")
-        await locator.type(text, delay=50)  # Human-like typing speed
-        return f"Typed '{text[:50]}...' into: {element.get('role', '')} '{element.get('name', '')}'"
-    except Exception as e:
-        return f"error typing: {e}"
+        loc = page.locator(f'[data-hawk-id="{element_index}"]').first
+        if await loc.count() > 0:
+            await loc.scroll_into_view_if_needed()
+            if clear:
+                await loc.clear()
+            await loc.fill(text)
+            return f"Typed: '{text}' into {element.get('tag', '')} '{element.get('name', '')}'"
+    except Exception:
+        pass
+
+    # Strategy 2: Native JS input with event dispatching (React/Angular friendly)
+    try:
+        typed = await page.evaluate(f"""
+            (textVal) => {{
+                const el = document.querySelector('[data-hawk-id="{element_index}"]');
+                if (el) {{
+                    el.focus();
+                    el.value = textVal;
+                    el.setAttribute('value', textVal);
+                    el.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                    el.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                    el.dispatchEvent(new Event('blur', {{ bubbles: true }}));
+                    return true;
+                }}
+                return false;
+            }}
+        """, text)
+        if typed:
+            return f"Typed (native JS): '{text}' into {element.get('tag', '')} '{element.get('name', '')}'"
+    except Exception:
+        pass
+
+    return f"error: Could not type into element {element_index} ('{element.get('name', '')}')"
 
 
 async def select_element(element_index: int, value: str) -> str:
-    """Select an option from a dropdown/select element."""
+    """Select an option from a dropdown/select element by value or text."""
     page = get_page()
     if page is None:
         return "error: Browser not started"
@@ -275,15 +268,72 @@ async def select_element(element_index: int, value: str) -> str:
     if element is None:
         return f"error: Element index {element_index} not found in last snapshot"
 
-    locator = await _find_locator_for_element(page, element)
-    if locator is None:
-        return f"error: Could not find locator for element '{element.get('name', '')}'"
+    # Strategy 1: Native JS select matching by value, text, or substring
+    try:
+        selected_text = await page.evaluate(f"""
+            (targetVal) => {{
+                const el = document.querySelector('[data-hawk-id="{element_index}"]');
+                if (!el || el.tagName !== 'SELECT') return null;
+
+                const valLower = targetVal.toLowerCase().trim();
+                let matchedOpt = null;
+
+                // Match exact value or text
+                for (let i = 0; i < el.options.length; i++) {{
+                    const opt = el.options[i];
+                    const optVal = (opt.value || '').toLowerCase().trim();
+                    const optText = (opt.text || '').toLowerCase().trim();
+                    if (optVal === valLower || optText === valLower || optText.includes(valLower)) {{
+                        matchedOpt = opt;
+                        el.selectedIndex = i;
+                        break;
+                    }}
+                }}
+
+                if (matchedOpt) {{
+                    matchedOpt.selected = true;
+                    el.value = matchedOpt.value;
+                    el.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                    el.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                    el.dispatchEvent(new Event('blur', {{ bubbles: true }}));
+                    return matchedOpt.text.trim();
+                }}
+                return null;
+            }}
+        """, value)
+
+        if selected_text:
+            return f"Selected: '{selected_text}' in select '{element.get('name', '')}'"
+    except Exception:
+        pass
+
+    # Strategy 2: Playwright select_option
+    try:
+        loc = page.locator(f'[data-hawk-id="{element_index}"]').first
+        if await loc.count() > 0:
+            await loc.select_option(value=value)
+            return f"Selected: '{value}' in '{element.get('name', '')}'"
+    except Exception:
+        pass
+
+    return f"error: Could not select '{value}' in element {element_index} ('{element.get('name', '')}')"
+
+
+async def upload_file(element_index: int, file_path: str) -> str:
+    """Upload a file to a file input element."""
+    page = get_page()
+    if page is None:
+        return "error: Browser not started"
 
     try:
-        await locator.select_option(value=value, timeout=5000)
-        return f"Selected '{value}' in: {element.get('role', '')} '{element.get('name', '')}'"
+        loc = page.locator(f'[data-hawk-id="{element_index}"], input[type="file"]').first
+        if await loc.count() > 0:
+            await loc.set_input_files(file_path)
+            return f"Uploaded file: {file_path}"
     except Exception as e:
-        return f"error selecting: {e}"
+        return f"error uploading file: {e}"
+
+    return f"error: Could not find file input for element {element_index}"
 
 
 async def upload_file(element_index: int, file_path: str) -> str:

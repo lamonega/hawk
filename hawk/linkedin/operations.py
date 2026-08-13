@@ -617,13 +617,21 @@ async def click_easy_apply() -> str:
 
 
 async def detect_form_fields() -> str:
-    """Detect form fields in the current Easy Apply modal.
+    """Detect and auto-fill form fields in the current Easy Apply modal.
 
-    Returns JSON with fields, has_submit/has_next, progress percentage, and total_fields.
+    Returns JSON with fields, filled_by_autofill, has_submit/has_next, progress percentage, and total_fields.
     """
     page = get_page()
     if page is None:
         return json.dumps({"error": "Browser not started"})
+
+    # Run autofill first
+    try:
+        from hawk.linkedin.autofill import auto_fill_current_step
+        autofill_res = await auto_fill_current_step()
+    except Exception as e:
+        logger.debug("Autofill step note: {}", e)
+        autofill_res = {}
 
     progress = await _get_progress_percentage()
 
@@ -634,10 +642,15 @@ async def detect_form_fields() -> str:
         follow_result = await page.evaluate("""
             () => {
                 const modal = document.querySelector('.jobs-easy-apply-modal') ||
-                              document.querySelector('[role="dialog"]');
+                              document.querySelector('[role="dialog"]') ||
+                              document.querySelector('.artdeco-modal');
                 if (!modal) return {has_follow_checkbox: false, follow_checked: false};
                 const followCheckbox = modal.querySelector('input[name="followCompany"]') ||
-                                       modal.querySelector('[data-follow-company]');
+                                       modal.querySelector('[data-follow-company]') ||
+                                       Array.from(modal.querySelectorAll('input[type="checkbox"]')).find(cb => {
+                                           const l = (cb.closest('label')?.innerText || '').toLowerCase();
+                                           return l.includes('seguir') || l.includes('follow');
+                                       });
                 return {
                     has_follow_checkbox: !!followCheckbox,
                     follow_checked: followCheckbox ? followCheckbox.checked : false,
@@ -645,6 +658,8 @@ async def detect_form_fields() -> str:
             }
         """)
         fields.update(follow_result)
+        fields["autofill_filled"] = autofill_res.get("filled", [])
+        fields["autofill_unknown"] = autofill_res.get("unknown_required", [])
 
         if progress is not None:
             fields["progress_percent"] = progress
@@ -749,6 +764,52 @@ async def click_next_or_submit() -> str:
         return "error: Browser not started"
 
     try:
+        # 1. Direct DOM autofill for select dropdowns and text inputs in active modal
+        await page.evaluate("""
+            () => {
+                const modal = document.querySelector('.jobs-easy-apply-modal') ||
+                              document.querySelector('[role="dialog"]') ||
+                              document.querySelector('.artdeco-modal') ||
+                              document.body;
+                if (!modal) return;
+
+                // Auto-select Argentina in any Country dropdown
+                const selects = Array.from(modal.querySelectorAll('select'));
+                for (const sel of selects) {
+                    for (let i = 0; i < sel.options.length; i++) {
+                        const optText = sel.options[i].text.trim().toLowerCase();
+                        if (optText === 'argentina' || optText.includes('argentina') || sel.options[i].value === 'ar') {
+                            sel.selectedIndex = i;
+                            sel.options[i].selected = true;
+                            sel.value = sel.options[i].value;
+                            sel.dispatchEvent(new Event('input', { bubbles: true }));
+                            sel.dispatchEvent(new Event('change', { bubbles: true }));
+                            sel.dispatchEvent(new Event('blur', { bubbles: true }));
+                            break;
+                        }
+                    }
+                }
+
+                // Auto-fill LinkedIn and Portfolio URLs
+                const inputs = Array.from(modal.querySelectorAll('input[type="text"], input:not([type])'));
+                for (const inp of inputs) {
+                    const parent = inp.closest('.jobs-easy-apply-form-section__group, .fb-dash-form-element, div[data-test-form-element]') || inp.parentElement;
+                    const label = ((parent ? parent.querySelector('label')?.innerText : '') || inp.getAttribute('aria-label') || inp.placeholder || inp.name || '').toLowerCase();
+                    
+                    if (label.includes('linkedin') && (!inp.value || inp.value.trim() === '')) {
+                        inp.value = 'https://www.linkedin.com/in/lflamonega';
+                        inp.dispatchEvent(new Event('input', { bubbles: true }));
+                        inp.dispatchEvent(new Event('change', { bubbles: true }));
+                    } else if ((label.includes('portfolio') || label.includes('github') || label.includes('web')) && (!inp.value || inp.value.trim() === '')) {
+                        inp.value = 'https://github.com/lflamonega';
+                        inp.dispatchEvent(new Event('input', { bubbles: true }));
+                        inp.dispatchEvent(new Event('change', { bubbles: true }));
+                    }
+                }
+            }
+        """)
+        await asyncio.sleep(0.8)
+
         # Priority: Submit first, then Next/Continue/Review
         selectors = [
             ("submit", 'button[aria-label*="Submit application"]'),
