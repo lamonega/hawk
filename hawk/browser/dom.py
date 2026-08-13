@@ -47,6 +47,7 @@ async def snapshot() -> str:
                     '[role=textbox]',
                     '[role=checkbox]',
                     '[role=radio]',
+                    '[role=tab]',
                     '[tabindex="0"]',
                 ];
 
@@ -56,6 +57,7 @@ async def snapshot() -> str:
 
                 // Priority: active modal first, then rest of document
                 const modal = document.querySelector('.jobs-easy-apply-modal') ||
+                              document.querySelector('div[data-test-modal-id="easy-apply-modal"]') ||
                               document.querySelector('[role="dialog"]') ||
                               document.querySelector('.artdeco-modal');
                 const rootNodes = modal ? [modal, document.body] : [document.body];
@@ -78,7 +80,7 @@ async def snapshot() -> str:
                                            tag === 'select' ? 'combobox' :
                                            tag === 'textarea' ? 'textbox' : tag);
 
-                            // Precision label extraction based on element type
+                            // Precision label extraction
                             let cleanLabel = '';
                             if (tag === 'button' || tag === 'a' || role === 'button' || role === 'link') {
                                 cleanLabel = el.getAttribute('aria-label') ||
@@ -89,16 +91,26 @@ async def snapshot() -> str:
                                              '';
                             } else {
                                 if (el.id) {
-                                    const labelFor = document.querySelector(`label[for="${el.id}"]`);
-                                    if (labelFor) cleanLabel = labelFor.innerText;
+                                    try {
+                                        const labelFor = document.querySelector(`label[for="${el.id}"]`);
+                                        if (labelFor && labelFor.innerText.trim()) cleanLabel = labelFor.innerText;
+                                    } catch(e) {}
                                 }
                                 if (!cleanLabel && el.labels && el.labels[0]) {
                                     cleanLabel = el.labels[0].innerText;
                                 }
                                 if (!cleanLabel) {
-                                    const formGroup = el.closest('.jobs-easy-apply-form-section__group, .fb-dash-form-element, div[data-test-form-element], fieldset, tr');
+                                    const ariaBy = el.getAttribute('aria-labelledby');
+                                    if (ariaBy) {
+                                        cleanLabel = ariaBy.split(' ')
+                                            .map(id => document.getElementById(id)?.innerText || '')
+                                            .join(' ').trim();
+                                    }
+                                }
+                                if (!cleanLabel) {
+                                    const formGroup = el.closest('.jobs-easy-apply-form-section__group, .fb-dash-form-element, div[data-test-form-element], fieldset, tr, div.artdeco-text-input--container');
                                     if (formGroup && !formGroup.classList.contains('jobs-easy-apply-modal') && !formGroup.classList.contains('artdeco-modal')) {
-                                        const formLabel = formGroup.querySelector('label, legend, .fb-dash-form-element__label, dt, th');
+                                        const formLabel = formGroup.querySelector('label, legend, .fb-dash-form-element__label, .artdeco-text-input--label, dt, th, span.t-14');
                                         if (formLabel) cleanLabel = formLabel.innerText;
                                     }
                                 }
@@ -234,14 +246,20 @@ async def type_element(element_index: int, text: str, clear: bool = False) -> st
     except Exception:
         pass
 
-    # Strategy 2: Native JS input with event dispatching (React/Angular friendly)
+    # Strategy 2: Native JS input with React-aware event dispatching
     try:
         typed = await page.evaluate(f"""
             (textVal) => {{
                 const el = document.querySelector('[data-hawk-id="{element_index}"]');
                 if (el) {{
                     el.focus();
-                    el.value = textVal;
+                    const proto = el.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
+                    const nativeSetter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+                    if (nativeSetter) {{
+                        nativeSetter.call(el, textVal);
+                    }} else {{
+                        el.value = textVal;
+                    }}
                     el.setAttribute('value', textVal);
                     el.dispatchEvent(new Event('input', {{ bubbles: true }}));
                     el.dispatchEvent(new Event('change', {{ bubbles: true }}));
@@ -272,6 +290,7 @@ async def select_element(element_index: int, value: str) -> str:
         selected_text = await page.evaluate("""
             (targetVal) => {
                 const modal = document.querySelector('.jobs-easy-apply-modal') ||
+                              document.querySelector('div[data-test-modal-id="easy-apply-modal"]') ||
                               document.querySelector('[role="dialog"]') ||
                               document.querySelector('.artdeco-modal') ||
                               document.body;
@@ -308,36 +327,45 @@ async def select_element(element_index: int, value: str) -> str:
         selected_text = await page.evaluate(f"""
             (targetVal) => {{
                 const el = document.querySelector('[data-hawk-id="{element_index}"]');
-                if (!el || el.tagName !== 'SELECT') return null;
+                if (!el) return null;
 
-                const valLower = targetVal.toLowerCase().trim();
-                let matchedOpt = null;
+                // Handle native SELECT
+                if (el.tagName === 'SELECT') {{
+                    const valLower = targetVal.toLowerCase().trim();
+                    let matchedOpt = null;
 
-                // Match exact value or text
-                for (let i = 0; i < el.options.length; i++) {{
-                    const opt = el.options[i];
-                    const optVal = (opt.value || '').toLowerCase().trim();
-                    const optText = (opt.text || '').toLowerCase().trim();
-                    if (optVal === valLower || optText === valLower || optText.includes(valLower)) {{
-                        matchedOpt = opt;
-                        el.selectedIndex = i;
-                        break;
+                    for (let i = 0; i < el.options.length; i++) {{
+                        const opt = el.options[i];
+                        const optVal = (opt.value || '').toLowerCase().trim();
+                        const optText = (opt.text || '').toLowerCase().trim();
+                        if (optVal === valLower || optText === valLower || optText.includes(valLower)) {{
+                            matchedOpt = opt;
+                            el.selectedIndex = i;
+                            break;
+                        }}
+                    }}
+
+                    if (matchedOpt) {{
+                        matchedOpt.selected = true;
+                        el.value = matchedOpt.value;
+                        el.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                        el.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                        el.dispatchEvent(new Event('blur', {{ bubbles: true }}));
+                        return matchedOpt.text.trim();
                     }}
                 }}
 
-                if (matchedOpt) {{
-                    matchedOpt.selected = true;
-                    el.value = matchedOpt.value;
-                    el.dispatchEvent(new Event('input', {{ bubbles: true }}));
-                    el.dispatchEvent(new Event('change', {{ bubbles: true }}));
-                    el.dispatchEvent(new Event('blur', {{ bubbles: true }}));
-                    return matchedOpt.text.trim();
+                // Handle custom Artdeco dropdown or combobox
+                if (el.getAttribute('role') === 'combobox' || el.classList.contains('artdeco-dropdown__trigger')) {{
+                    el.click();
+                    return 'opened_combobox';
                 }}
+
                 return null;
             }}
         """, value)
 
-        if selected_text:
+        if selected_text and selected_text != 'opened_combobox':
             return f"Selected: '{selected_text}' in select '{element.get('name', '')}'"
     except Exception:
         pass

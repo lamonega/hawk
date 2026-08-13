@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import random
@@ -21,124 +22,241 @@ SCREENSHOT_DIR = Path("output/screenshots")
 _DETECT_FIELDS_JS = """
 () => {
     const results = [];
+    
+    // 1. Locate modal container with robust priority
     const modal = document.querySelector('.jobs-easy-apply-modal') ||
-                  document.querySelector('[role="dialog"]') ||
+                  document.querySelector('div[data-test-modal-id="easy-apply-modal"]') ||
+                  document.querySelector('div[data-easy-apply-modal]') ||
+                  document.querySelector('div[role="dialog"]:has(.jobs-easy-apply-form-section__group)') ||
+                  document.querySelector('div[role="dialog"]:has(.fb-dash-form-element)') ||
+                  document.querySelector('div[role="dialog"]:has([data-test-form-element])') ||
+                  document.querySelector('div[role="dialog"]:has(button[aria-label*="Submit"], button[aria-label*="Enviar"], button[aria-label*="Continue"], button[aria-label*="Siguiente"], button[aria-label*="Review"], button[aria-label*="Revisar"])') ||
+                  document.querySelector('.artdeco-modal[role="dialog"]') ||
                   document.querySelector('.artdeco-modal') ||
-                  document.querySelector('div[data-test-modal]') ||
-                  document.querySelector('div[aria-modal="true"]') ||
+                  document.querySelector('[role="dialog"]') ||
                   document.body;
+
+    // Helper: find clean human-readable label text for an element
+    function getCleanLabel(el, idx) {
+        if (!el) return `Field ${idx}`;
+        
+        // 1. Label tag associated by ID
+        if (el.id) {
+            try {
+                const labelFor = document.querySelector(`label[for="${el.id}"]`);
+                if (labelFor && labelFor.innerText.trim()) {
+                    return labelFor.innerText.split('\\n')[0].replace(/\\s+/g, ' ').trim();
+                }
+            } catch(e) {}
+        }
+
+        // 2. Native HTML5 labels
+        if (el.labels && el.labels[0] && el.labels[0].innerText.trim()) {
+            return el.labels[0].innerText.split('\\n')[0].replace(/\\s+/g, ' ').trim();
+        }
+
+        // 3. aria-labelledby target elements
+        const labelledBy = el.getAttribute('aria-labelledby');
+        if (labelledBy) {
+            const parts = labelledBy.split(' ');
+            let combined = '';
+            for (const id of parts) {
+                const target = document.getElementById(id);
+                if (target && target.innerText.trim()) {
+                    combined += ' ' + target.innerText.trim();
+                }
+            }
+            if (combined.trim()) {
+                return combined.split('\\n')[0].replace(/\\s+/g, ' ').trim();
+            }
+        }
+
+        // 4. aria-label attribute
+        const ariaLabel = el.getAttribute('aria-label');
+        if (ariaLabel && ariaLabel.trim()) {
+            return ariaLabel.split('\\n')[0].replace(/\\s+/g, ' ').trim();
+        }
+
+        // 5. Parent container query
+        const parent = el.closest(
+            '.jobs-easy-apply-form-section__group, .fb-dash-form-element, ' +
+            'div[data-test-form-element], div[data-test-single-line-text-form-component], ' +
+            'div[data-test-form-builder-text-input], div[data-test-dropdown-form-component], ' +
+            'div[data-test-form-builder-radio-button-form-component], ' +
+            'div[data-test-text-entity-list-form-component], div.jobs-easy-apply-form-element, ' +
+            'fieldset, div.artdeco-text-input--container'
+        ) || el.parentElement;
+
+        if (parent) {
+            const labelEl = parent.querySelector('label, legend, .fb-dash-form-element__label, .artdeco-text-input--label, span.t-14, p, h3');
+            if (labelEl && labelEl.innerText.trim()) {
+                return labelEl.innerText.split('\\n')[0].replace(/\\s+/g, ' ').trim();
+            }
+        }
+
+        // 6. Placeholder / Title / Name fallback
+        const placeholder = el.getAttribute('placeholder') || el.getAttribute('title') || el.name || '';
+        if (placeholder.trim()) {
+            return placeholder.split('\\n')[0].replace(/\\s+/g, ' ').trim();
+        }
+
+        return `Field ${idx} (${el.type || el.tagName.toLowerCase()})`;
+    }
+
+    let fieldIndex = 0;
 
     // Text inputs
     modal.querySelectorAll('input[type="text"], input[type="email"], input[type="tel"], input[type="number"], input[type="url"], input:not([type])').forEach(el => {
-        const label = el.getAttribute('aria-label') ||
-                      el.closest('.jobs-easy-apply-form-section__group, .fb-dash-form-element, div[data-test-form-element]')?.querySelector('label')?.innerText ||
-                      el.getAttribute('name') || '';
-        if (label.trim()) {
-            results.push({
-                type: 'text',
-                name: label.trim().split('\\n')[0].trim(),
-                required: el.required || el.getAttribute('aria-required') === 'true',
-                value: el.value || '',
-                input_type: el.type || 'text',
-            });
-        }
+        fieldIndex++;
+        const label = getCleanLabel(el, fieldIndex);
+        const isCombobox = el.getAttribute('role') === 'combobox' || !!el.closest('[data-test-text-entity-list-form-component]');
+        results.push({
+            type: isCombobox ? 'combobox' : 'text',
+            name: label,
+            required: el.required || el.getAttribute('aria-required') === 'true' || label.includes('*'),
+            value: el.value || '',
+            input_type: el.type || 'text',
+            id: el.id || '',
+        });
     });
 
     // Textareas
     modal.querySelectorAll('textarea').forEach(el => {
-        const label = el.getAttribute('aria-label') ||
-                      el.closest('.jobs-easy-apply-form-section__group, .fb-dash-form-element, div[data-test-form-element]')?.querySelector('label')?.innerText ||
-                      el.getAttribute('placeholder') || el.name || '';
+        fieldIndex++;
+        const label = getCleanLabel(el, fieldIndex);
         results.push({
             type: 'textarea',
-            name: label.trim().split('\n')[0].trim(),
-            required: el.required || el.getAttribute('aria-required') === 'true',
+            name: label,
+            required: el.required || el.getAttribute('aria-required') === 'true' || label.includes('*'),
             value: el.value || '',
+            id: el.id || '',
         });
     });
 
-    // Selects
+    // Native Selects
     modal.querySelectorAll('select').forEach(el => {
-        const label = el.getAttribute('aria-label') ||
-                      el.closest('.jobs-easy-apply-form-section__group, .fb-dash-form-element, div[data-test-form-element]')?.querySelector('label')?.innerText ||
-                      el.getAttribute('name') || '';
-        const options = Array.from(el.options).map(o => ({value: o.value, text: o.text}));
+        fieldIndex++;
+        const label = getCleanLabel(el, fieldIndex);
+        const options = Array.from(el.options).map(o => ({value: o.value, text: o.text.trim()}));
         results.push({
             type: 'select',
-            name: label.trim().split('\n')[0].trim(),
-            required: el.required || el.getAttribute('aria-required') === 'true',
-            value: el.value,
+            name: label,
+            required: el.required || el.getAttribute('aria-required') === 'true' || label.includes('*'),
+            value: el.value || '',
+            selected_text: el.selectedIndex >= 0 && el.options[el.selectedIndex] ? el.options[el.selectedIndex].text.trim() : '',
             options: options,
+            id: el.id || '',
         });
     });
 
-    // Radios (grouped by name)
+    // Radios (grouped by name or container)
     const radioGroups = {};
     modal.querySelectorAll('input[type="radio"]').forEach(el => {
-        const name = el.getAttribute('name') || 'unknown';
-        if (!radioGroups[name]) {
-            const label = el.closest('.jobs-easy-apply-form-section__group, .fb-dash-form-element, div[data-test-form-element]')?.querySelector('label, legend')?.innerText || name;
-            radioGroups[name] = {
+        const parent = el.closest('fieldset, .fb-dash-form-element, div[data-test-form-builder-radio-button-form-component]') || el.parentElement;
+        const groupKey = el.name || (parent ? parent.innerText.slice(0, 30) : `radio_${fieldIndex}`);
+        
+        if (!radioGroups[groupKey]) {
+            fieldIndex++;
+            const groupLegend = (parent ? parent.querySelector('legend, label, .fb-dash-form-element__label')?.innerText : '') || getCleanLabel(el, fieldIndex);
+            radioGroups[groupKey] = {
                 type: 'radio',
-                name: label.trim().split('\\n')[0].trim(),
+                name: groupLegend.split('\\n')[0].replace(/\\s+/g, ' ').trim(),
                 required: true,
                 options: [],
+                group_name: el.name || '',
             };
         }
+        
         const optionLabel = el.closest('label')?.innerText ||
-                            el.nextElementSibling?.innerText || el.value;
-        radioGroups[name].options.push({value: el.value, text: optionLabel.trim()});
+                            (el.id ? document.querySelector(`label[for="${el.id}"]`)?.innerText : '') ||
+                            el.nextElementSibling?.innerText || el.value || '';
+        radioGroups[groupKey].options.push({
+            value: el.value || '',
+            text: optionLabel.split('\\n')[0].replace(/\\s+/g, ' ').trim(),
+            checked: el.checked,
+        });
     });
     results.push(...Object.values(radioGroups));
 
     // Checkboxes
     modal.querySelectorAll('input[type="checkbox"]').forEach(el => {
-        const label = el.getAttribute('aria-label') ||
-                      el.closest('label')?.innerText ||
-                      el.getAttribute('name') || '';
+        fieldIndex++;
+        const label = getCleanLabel(el, fieldIndex);
+        const isFollow = label.toLowerCase().includes('follow') || label.toLowerCase().includes('seguir') || (el.name && el.name.toLowerCase().includes('follow'));
         results.push({
             type: 'checkbox',
-            name: label.trim().split('\\n')[0].trim(),
-            required: false,
+            name: label,
+            required: el.required || el.getAttribute('aria-required') === 'true',
             checked: el.checked,
+            is_follow_company: isFollow,
+            id: el.id || '',
         });
     });
 
     // File uploads
     modal.querySelectorAll('input[type="file"]').forEach(el => {
-        const label = el.getAttribute('aria-label') ||
-                      el.closest('.jobs-easy-apply-form-section__group, .fb-dash-form-element, div[data-test-form-element]')?.querySelector('label')?.innerText ||
-                      'Resume/CV';
+        fieldIndex++;
+        const label = getCleanLabel(el, fieldIndex);
         results.push({
             type: 'file',
-            name: label.trim().split('\\n')[0].trim(),
-            required: el.required,
+            name: label || 'Resume/CV',
+            required: el.required || el.getAttribute('aria-required') === 'true',
+            id: el.id || '',
         });
     });
 
-    // Buttons (English and Spanish)
+    // Buttons (English, Spanish, Portuguese, French, German, Italian)
     const submitBtn = modal.querySelector('button[aria-label*="Submit application"]') ||
                       modal.querySelector('button[aria-label*="Enviar solicitud"]') ||
+                      modal.querySelector('button[aria-label*="Enviar candidatura"]') ||
+                      modal.querySelector('button[aria-label*="Bewerbung senden"]') ||
+                      modal.querySelector('button[aria-label*="Invia candidatura"]') ||
                       Array.from(modal.querySelectorAll('button')).find(b => {
-                          const t = (b.innerText || '').toLowerCase();
-                          return t === 'submit' || t === 'enviar solicitud';
+                          const t = (b.innerText || '').toLowerCase().trim();
+                          return t === 'submit' || t === 'submit application' || 
+                                 t === 'enviar solicitud' || t === 'enviar' || 
+                                 t === 'enviar candidatura' || t === 'candidatar-se' ||
+                                 t === 'soumettre' || t === 'bewerbung senden' || t === 'bewerben' ||
+                                 t === 'invia candidatura';
                       });
 
     const nextBtn = modal.querySelector('button[aria-label*="Continue"]') ||
                     modal.querySelector('button[aria-label*="Review"]') ||
+                    modal.querySelector('button[aria-label*="Next"]') ||
                     modal.querySelector('button[aria-label*="Siguiente"]') ||
+                    modal.querySelector('button[aria-label*="Continuar"]') ||
                     modal.querySelector('button[aria-label*="Revisar"]') ||
+                    modal.querySelector('button[aria-label*="Avançar"]') ||
+                    modal.querySelector('button[aria-label*="Suivant"]') ||
+                    modal.querySelector('button[aria-label*="Weiter"]') ||
                     modal.querySelector('button.artdeco-button--primary') ||
                     Array.from(modal.querySelectorAll('button')).find(b => {
-                        const t = (b.innerText || '').toLowerCase();
-                        return t === 'next' || t === 'continue' || t === 'review' || t === 'siguiente' || t === 'continuar' || t === 'revisar';
+                        const t = (b.innerText || '').toLowerCase().trim();
+                        return t === 'next' || t === 'continue' || t === 'review' || t === 'review your application' ||
+                               t === 'siguiente' || t === 'continuar' || t === 'revisar' || t === 'revisar solicitud' ||
+                               t === 'avançar' || t === 'seguinte' || t === 'suivant' || t === 'weiter' || t === 'avanti';
                     });
+
+    const backBtn = modal.querySelector('button[aria-label*="Back"]') ||
+                    modal.querySelector('button[aria-label*="Previous"]') ||
+                    modal.querySelector('button[aria-label*="Volver"]') ||
+                    modal.querySelector('button[aria-label*="Anterior"]') ||
+                    Array.from(modal.querySelectorAll('button')).find(b => {
+                        const t = (b.innerText || '').toLowerCase().trim();
+                        return t === 'back' || t === 'previous' || t === 'volver' || t === 'anterior' || t === 'zurück' || t === 'retour';
+                    });
+
+    // Validation errors currently shown
+    const errors = Array.from(modal.querySelectorAll('.artdeco-inline-feedback--error, [data-test-form-element-error-messages], .fb-dash-form-element__error-message'))
+                        .map(e => e.innerText.trim()).filter(e => e.length > 0);
 
     return {
         fields: results,
         has_submit: !!submitBtn,
         has_next: !!nextBtn,
+        has_back: !!backBtn,
         total_fields: results.length,
+        errors: errors,
     };
 }
 """
@@ -148,8 +266,6 @@ def _ensure_screenshot_dir() -> Path:
     SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
     return SCREENSHOT_DIR
 
-
-import asyncio
 
 async def human_delay() -> None:
     """Sleep a random duration between min_delay and max_delay from settings."""
@@ -175,25 +291,48 @@ async def _take_debug_screenshot(step_name: str) -> str | None:
 
 
 async def _get_progress_percentage() -> int | None:
-    """Extract progress percentage from the Easy Apply modal (e.g. 'Step 2 of 4 — 50%').
+    """Extract progress percentage from the Easy Apply modal.
 
-    Returns the percentage as int, or None if not found.
+    Checks aria-valuenow on progressbars, percentage strings, or step counts (e.g. 'Step 2 of 4').
     """
     page = get_page()
     if page is None:
         return None
     try:
-        text = await page.evaluate(
+        data = await page.evaluate(
             """
             () => {
                 const modal = document.querySelector('.jobs-easy-apply-modal') ||
+                              document.querySelector('div[data-test-modal-id="easy-apply-modal"]') ||
                               document.querySelector('[role="dialog"]');
-                return modal ? modal.innerText : '';
+                if (!modal) return { valuenow: null, text: '' };
+
+                const bar = modal.querySelector('div[role="progressbar"], progress, .artdeco-completeness-meter-bar');
+                const valuenow = bar ? (bar.getAttribute('aria-valuenow') || bar.value) : null;
+                return {
+                    valuenow: valuenow ? parseInt(valuenow) : null,
+                    text: modal.innerText || ''
+                };
             }
             """
         )
-        match = re.search(r"(\d{1,3})%", text)
-        return int(match.group(1)) if match else None
+        if data.get("valuenow") is not None:
+            return data["valuenow"]
+
+        text = data.get("text", "")
+        # Check percentage string "50%"
+        match_pct = re.search(r"(\d{1,3})%", text)
+        if match_pct:
+            return int(match_pct.group(1))
+
+        # Check step count "Step 2 of 4" or "Paso 1 de 3"
+        match_step = re.search(r"(?:Step|Paso|Étape|Schritt)\s+(\d+)\s+(?:of|de|von|d'|di)\s+(\d+)", text, re.IGNORECASE)
+        if match_step:
+            current, total = int(match_step.group(1)), int(match_step.group(2))
+            if total > 0:
+                return int((current / total) * 100)
+
+        return None
     except Exception:
         return None
 
@@ -253,31 +392,78 @@ def build_search_url(
     return f"{base}?{query}" if query else base
 
 
-
 async def wait_for_jobs() -> None:
-    """Wait for job links to load in the split view."""
+    """Wait for job cards or links to load on the search page."""
     page = get_page()
-    if page:
+    if not page:
+        return
+
+    job_selectors = [
+        'li[data-occludable-job-id]',
+        'div.job-card-container',
+        'div.jobs-search-results-list',
+        '.scaffold-layout__list',
+        'a[href*="/jobs/view/"]',
+        'a[href*="currentJobId="]',
+        '.base-card',
+    ]
+    for sel in job_selectors:
         try:
-            # Wait for at least one job link to appear
-            await page.wait_for_timeout(5000)
-            await page.wait_for_selector('a[href*="/jobs/view/"]', timeout=15000)
-            await human_delay()
+            loc = page.locator(sel).first
+            if await loc.is_visible(timeout=2500):
+                logger.debug("Found job results container with: {}", sel)
+                break
         except Exception:
-            pass
+            continue
+
+    # Smoothly scroll down the list container to trigger lazy-loaded cards
+    try:
+        await page.evaluate("""
+            () => {
+                const list = document.querySelector('.jobs-search-results-list') ||
+                             document.querySelector('.scaffold-layout__list') ||
+                             document.querySelector('div.scaffold-layout__list-container') ||
+                             window;
+                if (list && list.scrollBy) {
+                    list.scrollBy(0, 600);
+                }
+            }
+        """)
+        await asyncio.sleep(1.0)
+    except Exception:
+        pass
+
 
 async def extract_jobs_list() -> str:
     """Extract job cards from a LinkedIn search results page.
 
-    Returns JSON array of job summaries. Tries multiple selector strategies
-    including newer LinkedIn DOM patterns, then falls back to extracting all
-    /jobs/view/ links directly from the page.
+    Returns JSON array of job summaries. Automatically scrolls to load virtualized
+    cards and applies multi-strategy parsing for modern and legacy LinkedIn DOMs.
     """
     page = get_page()
     if page is None:
         return json.dumps({"error": "Browser not started"})
 
     await wait_for_jobs()
+
+    # Auto-scroll the results container 3 times to trigger virtualized cards
+    for _ in range(3):
+        try:
+            await page.evaluate("""
+                () => {
+                    const list = document.querySelector('.jobs-search-results-list') ||
+                                 document.querySelector('.scaffold-layout__list') ||
+                                 document.querySelector('div.scaffold-layout__list-container');
+                    if (list) {
+                        list.scrollTop += 500;
+                    } else {
+                        window.scrollBy(0, 400);
+                    }
+                }
+            """)
+            await asyncio.sleep(0.5)
+        except Exception:
+            break
 
     for attempt in range(3):
         try:
@@ -287,132 +473,153 @@ async def extract_jobs_list() -> str:
                     const seen = new Set();
                     const jobs = [];
 
-                    // Strategy 1: Modern split UI (data-display-contents)
-                    const modernCards = Array.from(document.querySelectorAll('div[data-display-contents="true"]')).filter(el => {
-                        const text = el.innerText || '';
-                        return (text.includes('Solicitud sencilla') || text.includes('Easy Apply') || text.includes('Adelántate') || text.includes('hace') || text.includes('Publicado')) &&
-                               text.length > 20 && text.length < 800;
-                    });
-
-                    if (modernCards.length > 0) {
-                        for (const card of modernCards) {
-                            const text = card.innerText.trim();
-                            const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
-                            if (lines.length < 2) continue;
-
-                            let role = lines[0].replace(/^Seleccionado,\s*/i, '').replace(/\s*\(empleo verificado\)/i, '');
-                            if (role === 'Seleccionado' || role.length < 3) {
-                                role = lines[1] || '';
-                            }
-
-                            if (!role || seen.has(role)) continue;
-                            seen.add(role);
-
-                            let company = '';
-                            let location = '';
-                            for (let i = 1; i < lines.length; i++) {
-                                const line = lines[i];
-                                if (line === role || line.includes('empleo verificado') || line.includes('Seleccionado')) continue;
-                                if (!company && !line.includes('Adelántate') && !line.includes('Publicado') && !line.includes('hace') && !line.includes('Solicitud') && !line.includes('Evaluando')) {
-                                    company = line;
-                                    continue;
-                                }
-                                if (company && !location && (line.includes('Buenos Aires') || line.includes('Argentina') || line.includes('Remoto') || line.includes('Híbrido') || line.includes('Presencial') || line.includes('alrededores'))) {
-                                    location = line;
-                                    break;
-                                }
-                            }
-
-                            const linkEl = card.querySelector('a[href*="currentJobId="], a[href*="/jobs/view/"]');
-                            let link = '';
-                            let jobId = '';
-                            if (linkEl) {
-                                link = linkEl.href;
-                                const m = link.match(/currentJobId=(\d+)/) || link.match(/view\/(?:.*-)?(\d+)/);
-                                if (m) jobId = m[1];
-                            }
-
-                            jobs.push({
-                                job_id: jobId,
-                                role: role,
-                                company: company,
-                                location: location,
-                                link: link || (jobId ? `https://www.linkedin.com/jobs/view/${jobId}/` : ''),
-                                easy_apply: text.toLowerCase().includes('solicitud sencilla') || text.toLowerCase().includes('easy apply'),
-                                already_applied: text.toLowerCase().includes('solicitado') || text.toLowerCase().includes('applied'),
-                            });
-                        }
-
-                        if (jobs.length > 0) return jobs;
-                    }
-
-                    // Strategy 2: Traditional card selectors
+                    // Strategy 1: Comprehensive job card containers
                     const cardSelectors = [
+                        'li[data-occludable-job-id]',
+                        'li.jobs-search-results__list-item',
+                        'li.scaffold-layout__list-item',
+                        'div.job-card-container',
+                        'div.job-card-list',
+                        'div[data-job-id]',
+                        'div[data-view-name="job-card"]',
                         'ul.jobs-search__results-list > li',
                         '.scaffold-layout__list-container > li',
-                        '.jobs-search-results-list > li',
-                        'li:has(a[href*="/jobs/view/"])',
-                        '.job-card-container',
                         '.base-card',
+                        'div[data-display-contents="true"]:has(a[href*="/jobs/view/"])',
+                        'div[data-display-contents="true"]:has(a[href*="currentJobId="])',
                     ];
 
-                    let cards = [];
+                    let rawCards = [];
                     for (const sel of cardSelectors) {
                         const found = document.querySelectorAll(sel);
                         if (found.length > 0) {
-                            cards = Array.from(found);
+                            rawCards = Array.from(found);
                             break;
                         }
                     }
 
-                    if (cards.length > 0) {
-                        for (const card of cards) {
-                            const linkEl = card.querySelector('a[href*="/jobs/view/"]') || card.querySelector('a');
-                            if (!linkEl) continue;
+                    function cleanRole(text) {
+                        if (!text) return '';
+                        return text
+                            .replace(/^Seleccionado,\s*/i, '')
+                            .replace(/^Selected,\s*/i, '')
+                            .replace(/\s*\(empleo verificado\)/gi, '')
+                            .replace(/\s*\(verified job\)/gi, '')
+                            .replace(/\s*·\s*contrataci[oó]n activa/gi, '')
+                            .replace(/\s*·\s*actively recruiting/gi, '')
+                            .replace(/\s*·\s*promoted/gi, '')
+                            .replace(/\s*·\s*promocionado/gi, '')
+                            .split('\n')[0]
+                            .replace(/\s+/g, ' ')
+                            .trim();
+                    }
 
-                            const href = linkEl.href.split('?')[0];
-                            const idMatch = href.match(/view\/(?:.*-)?(\d+)/) || href.match(/(\d{8,12})/);
-                            const jobId = idMatch ? idMatch[1] : '';
-                            if (!jobId || seen.has(jobId)) continue;
+                    if (rawCards.length > 0) {
+                        for (const card of rawCards) {
+                            // Extract Job ID
+                            let jobId = card.getAttribute('data-job-id') ||
+                                        card.getAttribute('data-occludable-job-id') ||
+                                        '';
+                            
+                            const linkEl = card.querySelector('a.job-card-list__title--link') ||
+                                           card.querySelector('a.job-card-container__link') ||
+                                           card.querySelector('a.job-card-list__title') ||
+                                           card.querySelector('a[href*="/jobs/view/"]') ||
+                                           card.querySelector('a[href*="currentJobId="]') ||
+                                           card.querySelector('a');
+
+                            let link = '';
+                            if (linkEl) {
+                                link = linkEl.href;
+                                if (!jobId) {
+                                    const m = link.match(/currentJobId=(\d+)/) ||
+                                              link.match(/\/jobs\/view\/(?:[^\/]+-)?(\d+)/) ||
+                                              link.match(/\/view\/(\d+)/) ||
+                                              link.match(/(\d{8,12})/);
+                                    if (m) jobId = m[1];
+                                }
+                            }
+
+                            // If still no jobId, check data-entity-urn
+                            if (!jobId) {
+                                const urn = card.getAttribute('data-entity-urn') || '';
+                                const m = urn.match(/jobPosting:(\d+)/);
+                                if (m) jobId = m[1];
+                            }
+
+                            if (!jobId) {
+                                jobId = link || card.innerText.slice(0, 30);
+                            }
+
+                            if (seen.has(jobId)) continue;
                             seen.add(jobId);
 
-                            const titleEl = card.querySelector('.base-search-card__title') ||
-                                            card.querySelector('.job-card-list__title--link') ||
+                            // Extract Role / Title
+                            let role = '';
+                            const titleEl = card.querySelector('.job-card-list__title--link') ||
                                             card.querySelector('.job-card-list__title') ||
+                                            card.querySelector('.job-card-container__link') ||
+                                            card.querySelector('.base-search-card__title') ||
+                                            card.querySelector('strong') ||
                                             card.querySelector('h3') ||
                                             card.querySelector('h4') ||
-                                            card.querySelector('strong') ||
                                             linkEl;
-                            const role = titleEl ? titleEl.innerText.trim() : '';
+                            
+                            if (titleEl) {
+                                const hiddenSpan = titleEl.querySelector('span[aria-hidden="true"]');
+                                role = cleanRole(hiddenSpan ? hiddenSpan.innerText : titleEl.innerText);
+                            }
 
-                            const companyEl = card.querySelector('.base-search-card__subtitle') ||
-                                              card.querySelector('.job-card-container__primary-description') ||
-                                              card.querySelector('.job-card-container__company-name') ||
+                            if (!role || role.length < 2) {
+                                const lines = card.innerText.split('\n').map(l => cleanRole(l)).filter(l => l.length > 2);
+                                role = lines[0] || '';
+                            }
+
+                            // Extract Company
+                            let company = '';
+                            const companyEl = card.querySelector('.job-card-container__primary-description') ||
                                               card.querySelector('.artdeco-entity-lockup__subtitle') ||
-                                              card.querySelector('h4.base-search-card__subtitle a') ||
+                                              card.querySelector('.job-card-container__company-name') ||
+                                              card.querySelector('a[href*="/company/"]') ||
+                                              card.querySelector('.base-search-card__subtitle') ||
                                               card.querySelector('[class*="company"]') ||
                                               card.querySelector('[class*="subtitle"]');
-                            const company = companyEl ? companyEl.innerText.trim() : '';
+                            if (companyEl) {
+                                company = companyEl.innerText.split('\n')[0].replace(/\s+/g, ' ').trim();
+                            }
 
-                            const locationEl = card.querySelector('.job-search-card__location') ||
-                                               card.querySelector('.job-card-container__metadata-item') ||
+                            // Extract Location
+                            let location = '';
+                            const locationEl = card.querySelector('.job-card-container__metadata-item') ||
                                                card.querySelector('.artdeco-entity-lockup__caption') ||
+                                               card.querySelector('ul.job-card-container__metadata-wrapper li') ||
                                                card.querySelector('.job-card-container__location') ||
+                                               card.querySelector('.job-search-card__location') ||
                                                card.querySelector('[class*="location"]') ||
                                                card.querySelector('[class*="caption"]');
-                            const location = locationEl ? locationEl.innerText.trim() : '';
+                            if (locationEl) {
+                                location = locationEl.innerText.split('\n')[0].replace(/\s+/g, ' ').trim();
+                            }
 
                             const cardText = card.innerText.toLowerCase();
                             const easyApply = cardText.includes('solicitud sencilla') ||
                                               cardText.includes('easy apply') ||
+                                              cardText.includes('candidatura sencilla') ||
+                                              cardText.includes('candidatura fácil') ||
                                               !!card.querySelector('.job-card-container__apply-method') ||
                                               !!card.querySelector('[data-testid="job-card-list-item__easy-apply"]') ||
                                               !!card.querySelector('[class*="easy-apply"]');
 
                             const alreadyApplied = cardText.includes('solicitado') ||
                                                    cardText.includes('applied') ||
+                                                   cardText.includes('candidatura enviada') ||
+                                                   cardText.includes('ya has solicitado') ||
                                                    !!card.querySelector('.jobs-search-results-list__state-message') ||
                                                    !!card.querySelector('.artdeco-inline-feedback');
+
+                            const canonicalLink = jobId && /^\d+$/.test(jobId) 
+                                ? `https://www.linkedin.com/jobs/view/${jobId}/` 
+                                : (link ? link.split('?')[0] : '');
 
                             if (role) {
                                 jobs.push({
@@ -420,7 +627,7 @@ async def extract_jobs_list() -> str:
                                     role: role,
                                     company: company,
                                     location: location,
-                                    link: href,
+                                    link: canonicalLink,
                                     easy_apply: easyApply,
                                     already_applied: alreadyApplied,
                                 });
@@ -428,19 +635,22 @@ async def extract_jobs_list() -> str:
                         }
                     }
 
-                    // Strategy 3: Fallback direct links
+                    // Strategy 2: Direct links fallback
                     if (jobs.length === 0) {
                         const links = Array.from(document.querySelectorAll('a[href*="/jobs/view/"], a[href*="currentJobId="]'));
                         for (const link of links) {
-                            const href = link.href.split('?')[0];
-                            const idMatch = href.match(/view\/(?:.*-)?(\d+)/) || href.match(/currentJobId=(\d+)/) || href.match(/(\d{8,12})/);
-                            const jobId = idMatch ? idMatch[1] : '';
+                            const href = link.href;
+                            const m = href.match(/currentJobId=(\d+)/) ||
+                                      href.match(/\/jobs\/view\/(?:[^\/]+-)?(\d+)/) ||
+                                      href.match(/\/view\/(\d+)/) ||
+                                      href.match(/(\d{8,12})/);
+                            const jobId = m ? m[1] : '';
                             if (!jobId || seen.has(jobId)) continue;
                             seen.add(jobId);
 
-                            const card = link.closest('li') || link.parentElement;
-                            const role = link.innerText.trim() || link.getAttribute('aria-label') || '';
+                            const card = link.closest('li, div[class*="card"], div[class*="item"]') || link.parentElement;
                             const cardText = card ? card.innerText.toLowerCase() : '';
+                            const role = cleanRole(link.innerText || link.getAttribute('aria-label') || '');
 
                             if (role) {
                                 jobs.push({
@@ -448,9 +658,9 @@ async def extract_jobs_list() -> str:
                                     role: role,
                                     company: '',
                                     location: '',
-                                    link: href,
-                                    easy_apply: cardText.includes('solicitud sencilla') || cardText.includes('easy apply'),
-                                    already_applied: cardText.includes('solicitado') || cardText.includes('applied'),
+                                    link: `https://www.linkedin.com/jobs/view/${jobId}/`,
+                                    easy_apply: cardText.includes('solicitud sencilla') || cardText.includes('easy apply') || cardText.includes('candidatura sencilla'),
+                                    already_applied: cardText.includes('solicitado') || cardText.includes('applied') || cardText.includes('candidatura enviada'),
                                 });
                             }
                         }
@@ -464,108 +674,150 @@ async def extract_jobs_list() -> str:
         except Exception as e:
             if attempt == 2:
                 return json.dumps({"error": str(e)})
-            await page.wait_for_timeout(2000)
+            await page.wait_for_timeout(1500)
+
+    return json.dumps([])
 
 
 async def extract_job_details() -> str:
-    """Extract detailed job info from the current LinkedIn job page."""
+    """Extract detailed job info from the current LinkedIn job page or split view."""
     page = get_page()
     if page is None:
         return json.dumps({"error": "Browser not started"})
+
+    # Try to expand truncated description ("Show more" / "Ver más")
+    try:
+        await page.evaluate("""
+            () => {
+                const showMoreBtn = document.querySelector('button.jobs-description__footer-button') ||
+                                    document.querySelector('button[aria-label*="Show more"]') ||
+                                    document.querySelector('button[aria-label*="Ver más"]') ||
+                                    document.querySelector('button.show-more-less-html__button') ||
+                                    document.querySelector('.artdeco-card__actions button');
+                if (showMoreBtn) {
+                    showMoreBtn.click();
+                }
+            }
+        """)
+        await asyncio.sleep(0.5)
+    except Exception:
+        pass
 
     try:
         job = await page.evaluate(
             r"""
             () => {
-                // 1. Title
+                // 1. Title / Role
                 let title = '';
-                const titleEl = document.querySelector('h1.top-card-layout__title') ||
-                                document.querySelector('h1.topcard__title') ||
-                                document.querySelector('h1.job-details-jobs-unified-top-card__job-title') ||
+                const titleEl = document.querySelector('h1.job-details-jobs-unified-top-card__job-title') ||
+                                document.querySelector('h2.job-details-jobs-unified-top-card__job-title') ||
+                                document.querySelector('.job-details-jobs-unified-top-card__job-title-link') ||
+                                document.querySelector('div.job-details-jobs-unified-top-card__title-container h1') ||
                                 document.querySelector('.jobs-unified-top-card__job-title') ||
+                                document.querySelector('h1.top-card-layout__title') ||
+                                document.querySelector('h1.topcard__title') ||
                                 document.querySelector('h1.t-24') ||
                                 document.querySelector('h2.t-24') ||
+                                document.querySelector('div[data-view-name="job-details"] h1') ||
                                 document.querySelector('h1');
                 if (titleEl) {
-                    title = titleEl.innerText.trim();
+                    title = titleEl.innerText.split('\n')[0].replace(/\s+/g, ' ').trim();
                 }
 
                 // 2. Company
                 let company = '';
-                const companyEl = document.querySelector('a.topcard__org-name-link') ||
-                                  document.querySelector('span.topcard__flavor:not(.topcard__flavor--bullet)') ||
-                                  document.querySelector('.job-details-jobs-unified-top-card__company-name a') ||
+                const companyEl = document.querySelector('div.job-details-jobs-unified-top-card__company-name a') ||
+                                  document.querySelector('span.job-details-jobs-unified-top-card__company-name') ||
+                                  document.querySelector('div.job-details-jobs-unified-top-card__company-name') ||
                                   document.querySelector('.job-details-jobs-unified-top-card__company-name') ||
                                   document.querySelector('.jobs-unified-top-card__company-name a') ||
                                   document.querySelector('.jobs-unified-top-card__company-name') ||
+                                  document.querySelector('a.topcard__org-name-link') ||
                                   document.querySelector('.artdeco-entity-lockup__subtitle a') ||
                                   document.querySelector('.artdeco-entity-lockup__subtitle') ||
                                   document.querySelector('a[href*="/company/"]');
                 if (companyEl) {
-                    company = companyEl.innerText.trim().split('\n')[0].trim();
+                    company = companyEl.innerText.split('\n')[0].replace(/\s+/g, ' ').trim();
                 }
 
-                // 3. Location
+                // 3. Location & Workplace Type
                 let location = '';
-                const locationEl = document.querySelector('span.topcard__flavor--bullet') ||
-                                   document.querySelector('.job-details-jobs-unified-top-card__bullet') ||
-                                   document.querySelector('.jobs-unified-top-card__bullet') ||
-                                   document.querySelector('.job-details-jobs-unified-top-card__primary-description') ||
-                                   document.querySelector('.artdeco-entity-lockup__caption') ||
-                                   document.querySelector('span.main-job-card__location');
-                if (locationEl) {
-                    location = locationEl.innerText.trim().split('\n')[0].trim();
+                let workplaceType = '';
+                const locEl = document.querySelector('.job-details-jobs-unified-top-card__primary-description-container') ||
+                              document.querySelector('span.job-details-jobs-unified-top-card__bullet') ||
+                              document.querySelector('.jobs-unified-top-card__bullet') ||
+                              document.querySelector('span.topcard__flavor--bullet') ||
+                              document.querySelector('.artdeco-entity-lockup__caption') ||
+                              document.querySelector('span.main-job-card__location');
+                if (locEl) {
+                    location = locEl.innerText.split('\n')[0].replace(/\s+/g, ' ').trim();
                 }
 
-                // 4. Description
+                const wpEl = document.querySelector('span.job-details-jobs-unified-top-card__workplace-type') ||
+                             document.querySelector('span.jobs-unified-top-card__workplace-type');
+                if (wpEl) {
+                    workplaceType = wpEl.innerText.trim();
+                }
+
+                // 4. Full Description
                 let description = '';
-                const descEl = document.querySelector('.jobs-description__content') ||
-                               document.querySelector('.jobs-description') ||
-                               document.querySelector('.description__text') ||
-                               document.querySelector('.show-more-less-html__markup') ||
+                const descEl = document.querySelector('#job-details') ||
+                               document.querySelector('.jobs-description__content') ||
                                document.querySelector('.jobs-box__html-content') ||
-                               document.querySelector('#job-details') ||
+                               document.querySelector('.jobs-description') ||
+                               document.querySelector('.show-more-less-html__markup') ||
+                               document.querySelector('article.jobs-description__container') ||
+                               document.querySelector('.description__text') ||
                                document.querySelector('article');
                 if (descEl) {
                     description = descEl.innerText.trim();
                 } else {
-                    // Fallback to text matching "Acerca del empleo" / "About the job"
                     const pageText = document.body ? document.body.innerText : '';
-                    const match = pageText.match(/(?:Acerca del empleo|About the job|Summary)[\s\S]{50,4000}/i);
+                    const match = pageText.match(/(?:Acerca del empleo|About the job|Sobre la vacante|Description)[\s\S]{50,6000}/i);
                     if (match) {
                         description = match[0].trim();
                     }
                 }
 
-                // 5. Easy Apply button detection
+                // 5. Easy Apply Button & State
                 const easyApplyBtn = document.querySelector('button.jobs-apply-button') ||
                                      document.querySelector('button.apply-button--easy-apply') ||
                                      document.querySelector('button[aria-label*="Easy Apply"]') ||
                                      document.querySelector('button[aria-label*="Solicitud sencilla"]') ||
+                                     document.querySelector('button[aria-label*="Candidatura sencilla"]') ||
                                      document.querySelector('button[data-is-easy-apply="true"]') ||
+                                     document.querySelector('div.jobs-apply-button--top-card button') ||
+                                     document.querySelector('div.jobs-s-apply button') ||
                                      Array.from(document.querySelectorAll('button')).find(b => {
-                                         const t = (b.innerText || '').toLowerCase();
-                                         return t.includes('solicitud sencilla') || t.includes('easy apply');
+                                         const t = (b.innerText || '').toLowerCase().trim();
+                                         return t.includes('solicitud sencilla') || t.includes('easy apply') || t.includes('candidatura sencilla');
                                      });
 
-                // Detect "already applied" state
                 const appliedBanner = document.querySelector('.jobs-apply-button--disabled') ||
-                                      document.querySelector('.artdeco-inline-feedback--success');
-                const alreadyApplied = !!(appliedBanner) ||
-                    (easyApplyBtn && easyApplyBtn.disabled) ||
-                    (easyApplyBtn && (easyApplyBtn.innerText.includes('Applied') || easyApplyBtn.innerText.includes('Solicitado')));
+                                      document.querySelector('.artdeco-inline-feedback--success') ||
+                                      document.querySelector('.jobs-applied-banner') ||
+                                      document.querySelector('span.jobs-s-apply__applied-text');
+                
+                const btnText = easyApplyBtn ? (easyApplyBtn.innerText || '').toLowerCase() : '';
+                const alreadyApplied = !!appliedBanner ||
+                                       (easyApplyBtn && easyApplyBtn.disabled) ||
+                                       btnText.includes('applied') || btnText.includes('solicitado') || btnText.includes('enviada');
 
-                const recruiter = document.querySelector('.jobs-search__organizer-link') ||
-                                  document.querySelector('a[data-tracking-control-name="public_jobs_jobs-search-result-1"]');
+                // 6. Recruiter info
+                const recruiterEl = document.querySelector('.jobs-poster__name') ||
+                                    document.querySelector('.hirer-card__hirer-information') ||
+                                    document.querySelector('.jobs-search__organizer-link') ||
+                                    document.querySelector('a[data-tracking-control-name="public_jobs_jobs-search-result-1"]');
 
                 return {
                     role: title,
                     company: company,
                     location: location,
+                    workplace_type: workplaceType,
                     description: description,
                     easy_apply: !!easyApplyBtn,
                     already_applied: !!alreadyApplied,
-                    recruiter: recruiter ? recruiter.href : '',
+                    recruiter: recruiterEl ? (recruiterEl.innerText || recruiterEl.href || '').trim() : '',
                     url: window.location.href,
                 };
             }
@@ -578,7 +830,7 @@ async def extract_job_details() -> str:
 
 
 async def click_easy_apply() -> str:
-    """Click the Easy Apply button with multi-layer selector fallbacks.
+    """Click the Easy Apply button with robust selector fallbacks.
 
     Returns 'clicked', 'already_applied', or 'error: ...'.
     """
@@ -588,41 +840,67 @@ async def click_easy_apply() -> str:
 
     await _take_debug_screenshot("easy_apply_before_click")
 
-    try:
-        selectors = [
-            'button.jobs-apply-button',
-            'button.apply-button--easy-apply',
-            'button.apply-button',
-            'button[aria-label*="Easy Apply"]',
-            'button[aria-label*="Solicitud sencilla"]',
-            'button.artdeco-button--primary:has-text("Easy Apply")',
-            'button.artdeco-button--primary:has-text("Solicitud sencilla")',
-            'button:has-text("Easy Apply")',
-            'button:has-text("Solicitud sencilla")',
-            'button:has-text("Solicitar")',
-            'button[aria-label*="Apply"]',
-            'button[aria-label*="Solicitar"]',
-            'button[class*="apply-button"]',
-        ]
+    selectors = [
+        'button.jobs-apply-button',
+        'button.apply-button--easy-apply',
+        'button.apply-button',
+        'button[aria-label*="Easy Apply"]',
+        'button[aria-label*="Solicitud sencilla"]',
+        'button[aria-label*="Candidatura sencilla"]',
+        'button.artdeco-button--primary:has-text("Easy Apply")',
+        'button.artdeco-button--primary:has-text("Solicitud sencilla")',
+        'button.artdeco-button--primary:has-text("Candidatura sencilla")',
+        'button:has-text("Easy Apply")',
+        'button:has-text("Solicitud sencilla")',
+        'button:has-text("Candidatura sencilla")',
+        'button:has-text("Solicitar")',
+        'div.jobs-apply-button--top-card button',
+        'div.jobs-s-apply button',
+        'button[class*="apply-button"]',
+    ]
 
+    try:
         for selector in selectors:
             try:
                 btn = page.locator(selector).first
-                if await btn.is_visible(timeout=3000):
-                    btn_text = await btn.inner_text(timeout=2000)
-                    btn_text_lower = btn_text.lower()
+                if await btn.is_visible(timeout=2000):
+                    btn_text = (await btn.inner_text(timeout=1500)).lower()
                     is_disabled = await btn.is_disabled()
 
-                    if is_disabled or "applied" in btn_text_lower or "solicitado" in btn_text_lower:
-                        logger.info("Already applied to this job")
+                    if is_disabled or "applied" in btn_text or "solicitado" in btn_text or "enviada" in btn_text:
+                        logger.info("Already applied to this job (detected on button)")
                         return "already_applied"
 
-                    await btn.click(timeout=5000)
+                    await btn.scroll_into_view_if_needed()
+                    await btn.click(timeout=4000)
                     await human_delay()
                     await _take_debug_screenshot("easy_apply_after_click")
                     return "clicked"
             except Exception:
                 continue
+
+        # Strategy 2: Native JS click
+        clicked_js = await page.evaluate("""
+            () => {
+                const btn = document.querySelector('button.jobs-apply-button') ||
+                            document.querySelector('button[aria-label*="Easy Apply"]') ||
+                            document.querySelector('button[aria-label*="Solicitud sencilla"]') ||
+                            Array.from(document.querySelectorAll('button')).find(b => {
+                                const t = (b.innerText || '').toLowerCase();
+                                return t.includes('solicitud sencilla') || t.includes('easy apply');
+                            });
+                if (btn && !btn.disabled) {
+                    btn.scrollIntoView({ block: 'center' });
+                    btn.click();
+                    return true;
+                }
+                return false;
+            }
+        """)
+        if clicked_js:
+            await human_delay()
+            await _take_debug_screenshot("easy_apply_after_click_js")
+            return "clicked"
 
         return "error: Easy Apply button not found"
     except Exception as e:
@@ -655,6 +933,7 @@ async def detect_form_fields() -> str:
         follow_result = await page.evaluate("""
             () => {
                 const modal = document.querySelector('.jobs-easy-apply-modal') ||
+                              document.querySelector('div[data-test-modal-id="easy-apply-modal"]') ||
                               document.querySelector('[role="dialog"]') ||
                               document.querySelector('.artdeco-modal');
                 if (!modal) return {has_follow_checkbox: false, follow_checked: false};
@@ -686,8 +965,7 @@ async def detect_form_fields() -> str:
 async def detect_fields_with_profile() -> str:
     """Detect form fields and match them against the user profile.
 
-    Same as detect_form_fields but adds 'profile_value' to each field
-    when a match is found. Also identifies fields that need human input.
+    Adds 'profile_value' to each field when a match is found and lists fields needing human input.
     """
     from hawk.profile import load_profile, match_field
 
@@ -701,7 +979,6 @@ async def detect_fields_with_profile() -> str:
     try:
         raw = await page.evaluate(_DETECT_FIELDS_JS)
 
-        # Match each field against profile
         needs_human = []
         for field in raw.get("fields", []):
             name = field.get("name", "")
@@ -735,10 +1012,11 @@ async def unfollow_company() -> str:
             """
             () => {
                 const modal = document.querySelector('.jobs-easy-apply-modal') ||
-                              document.querySelector('[role="dialog"]');
+                              document.querySelector('div[data-test-modal-id="easy-apply-modal"]') ||
+                              document.querySelector('[role="dialog"]') ||
+                              document.querySelector('.artdeco-modal');
                 if (!modal) return 'no_modal';
 
-                // Multiple selector strategies for follow checkbox
                 const selectors = [
                     'input[name="followCompany"]',
                     '[data-follow-company]',
@@ -749,8 +1027,11 @@ async def unfollow_company() -> str:
                     const checkboxes = modal.querySelectorAll(sel);
                     for (const cb of checkboxes) {
                         const label = cb.closest('label')?.innerText || cb.getAttribute('aria-label') || '';
-                        if (label.toLowerCase().includes('follow') && cb.checked) {
+                        const labelLower = label.toLowerCase();
+                        if ((labelLower.includes('follow') || labelLower.includes('seguir')) && cb.checked) {
                             cb.click();
+                            cb.checked = false;
+                            cb.dispatchEvent(new Event('change', { bubbles: true }));
                             return 'unchecked';
                         }
                     }
@@ -777,63 +1058,22 @@ async def click_next_or_submit() -> str:
         return "error: Browser not started"
 
     try:
-        # 1. Direct DOM autofill for select dropdowns and text inputs in active modal
-        await page.evaluate("""
-            () => {
-                const modal = document.querySelector('.jobs-easy-apply-modal') ||
-                              document.querySelector('[role="dialog"]') ||
-                              document.querySelector('.artdeco-modal') ||
-                              document.body;
-                if (!modal) return;
-
-                // Auto-select Argentina in any Country dropdown
-                const selects = Array.from(modal.querySelectorAll('select'));
-                for (const sel of selects) {
-                    for (let i = 0; i < sel.options.length; i++) {
-                        const optText = sel.options[i].text.trim().toLowerCase();
-                        if (optText === 'argentina' || optText.includes('argentina') || sel.options[i].value === 'ar') {
-                            sel.selectedIndex = i;
-                            sel.options[i].selected = true;
-                            sel.value = sel.options[i].value;
-                            sel.dispatchEvent(new Event('input', { bubbles: true }));
-                            sel.dispatchEvent(new Event('change', { bubbles: true }));
-                            sel.dispatchEvent(new Event('blur', { bubbles: true }));
-                            break;
-                        }
-                    }
-                }
-
-                // Auto-fill LinkedIn and Portfolio URLs
-                const inputs = Array.from(modal.querySelectorAll('input[type="text"], input:not([type])'));
-                for (const inp of inputs) {
-                    const parent = inp.closest('.jobs-easy-apply-form-section__group, .fb-dash-form-element, div[data-test-form-element]') || inp.parentElement;
-                    const label = ((parent ? parent.querySelector('label')?.innerText : '') || inp.getAttribute('aria-label') || inp.placeholder || inp.name || '').toLowerCase();
-                    
-                    if (label.includes('linkedin') && (!inp.value || inp.value.trim() === '')) {
-                        inp.value = 'https://www.linkedin.com/in/lflamonega';
-                        inp.dispatchEvent(new Event('input', { bubbles: true }));
-                        inp.dispatchEvent(new Event('change', { bubbles: true }));
-                    } else if ((label.includes('portfolio') || label.includes('github') || label.includes('web')) && (!inp.value || inp.value.trim() === '')) {
-                        inp.value = 'https://github.com/lflamonega';
-                        inp.dispatchEvent(new Event('input', { bubbles: true }));
-                        inp.dispatchEvent(new Event('change', { bubbles: true }));
-                    }
-                }
-            }
-        """)
-        await asyncio.sleep(0.8)
-
         # Priority: Submit first, then Next/Continue/Review
         selectors = [
             ("submit", 'button[aria-label*="Submit application"]'),
             ("submit", 'button[aria-label*="Enviar solicitud"]'),
-            ("submit", 'button:has-text("Submit")'),
+            ("submit", 'button[aria-label*="Enviar candidatura"]'),
+            ("submit", 'button:has-text("Submit application")'),
             ("submit", 'button:has-text("Enviar solicitud")'),
+            ("submit", 'button:has-text("Enviar candidatura")'),
+            ("submit", 'button:has-text("Submit")'),
             ("submit", 'button:has-text("Enviar")'),
             ("next", 'button[aria-label*="Continue"]'),
             ("next", 'button[aria-label*="Review"]'),
             ("next", 'button[aria-label*="Siguiente"]'),
+            ("next", 'button[aria-label*="Continuar"]'),
             ("next", 'button[aria-label*="Revisar"]'),
+            ("next", 'button[aria-label*="Avançar"]'),
             ("next", 'button.artdeco-button--primary'),
             ("next", 'button:has-text("Next")'),
             ("next", 'button:has-text("Continue")'),
@@ -841,12 +1081,14 @@ async def click_next_or_submit() -> str:
             ("next", 'button:has-text("Siguiente")'),
             ("next", 'button:has-text("Continuar")'),
             ("next", 'button:has-text("Revisar")'),
+            ("next", 'button:has-text("Avançar")'),
         ]
 
         for action, selector in selectors:
             try:
                 btn = page.locator(selector).first
                 if await btn.is_visible(timeout=2000):
+                    await btn.scroll_into_view_if_needed()
                     await btn.click(timeout=3000)
                     await human_delay()
                     await _take_debug_screenshot(f"after_{action}_click")
@@ -865,7 +1107,7 @@ async def submit_application() -> str:
     1. Unfollow company if checkbox is checked
     2. Check dry_run — if true, do NOT click Submit
     3. Click Submit
-    4. Verify submission by checking modal closed
+    4. Verify submission by checking modal closed or confirmation message
     """
     settings = get_settings()
     if settings.apply.dry_run:
@@ -884,8 +1126,10 @@ async def submit_application() -> str:
         submit_selectors = [
             'button[aria-label*="Submit application"]',
             'button[aria-label*="Enviar solicitud"]',
+            'button[aria-label*="Enviar candidatura"]',
             'button:has-text("Enviar solicitud")',
             'button:has-text("Submit application")',
+            'button:has-text("Enviar candidatura")',
             'button:has-text("Enviar")',
             'button:has-text("Submit")',
         ]
@@ -902,17 +1146,18 @@ async def submit_application() -> str:
         if btn is None:
             return "error: Submit button not found"
 
+        await btn.scroll_into_view_if_needed()
         await btn.click(timeout=5000)
         await human_delay()
 
         # Verify submission succeeded — check modal closed
         try:
-            modal = page.locator('.jobs-easy-apply-modal, [role="dialog"], .artdeco-modal').first
+            modal = page.locator('.jobs-easy-apply-modal, div[data-test-modal-id="easy-apply-modal"], [role="dialog"], .artdeco-modal').first
             await modal.wait_for(state="hidden", timeout=5000)
             logger.info("Submit verified: modal closed")
         except Exception:
             # Modal might still be open — check for success message
-            success = page.locator('.artdeco-inline-feedback--success, .jobs-succeeded-apply-message').first
+            success = page.locator('.artdeco-inline-feedback--success, .jobs-succeeded-apply-message, .jobs-applied-banner').first
             if await success.is_visible(timeout=2000):
                 logger.info("Submit verified: success message shown")
             else:
@@ -933,7 +1178,7 @@ async def get_page_text() -> str:
 
     try:
         text = await page.evaluate("() => document.body.innerText")
-        return text[:10000]
+        return text[:15000]
     except Exception as e:
         return f"error: {e}"
 

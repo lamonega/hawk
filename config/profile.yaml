@@ -6,7 +6,8 @@ education:
   graduation_year: '2027'
   school: Facultad de Informática - UNLP
 experience: []
-languages: {}
+languages:
+  english: Professional
 links:
   github: github.com/lflamonega
   linkedin: linkedin.com/in/lflamonega

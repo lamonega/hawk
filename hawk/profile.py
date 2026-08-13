@@ -215,55 +215,55 @@ def check_profile_completeness(profile: UserProfile) -> dict[str, Any]:
 
 _FIELD_RULES: list[tuple[str, str]] = [
     # Personal
-    (r"first\s*name", "personal.first_name"),
-    (r"last\s*name|surname|family\s*name", "personal.last_name"),
-    (r"full\s*name", "_full_name"),
-    (r"e-?mail", "personal.email"),
-    (r"phone|mobile|telephone|cell", "personal.phone"),
-    (r"city", "personal.city"),
-    (r"state|province|region", "personal.state"),
-    (r"country", "personal.country"),
-    (r"postal|zip\s*code|zip", "personal.postal_code"),
+    (r"first\s*name|primer\s*nombre|nombre(?!\s*completo)", "personal.first_name"),
+    (r"last\s*name|surname|family\s*name|apellido", "personal.last_name"),
+    (r"full\s*name|nombre\s*completo", "_full_name"),
+    (r"e-?mail|correo|direcci[oó]n\s*de\s*correo", "personal.email"),
+    (r"phone|mobile|telephone|cell|tel[eé]fono|celular|m[oó]vil|whatsapp", "personal.phone"),
+    (r"city|ciudad|localidad|municipio", "personal.city"),
+    (r"state|province|region|provincia|estado", "personal.state"),
+    (r"country|pa[ií]s|nacionalidad", "personal.country"),
+    (r"postal|zip\s*code|zip|c[oó]digo\s*postal", "personal.postal_code"),
 
     # Links
-    (r"linkedin\s*url|linkedin\s*profile", "links.linkedin"),
+    (r"linkedin\s*url|linkedin\s*profile|perfil\s*de\s*linkedin|linkedin", "links.linkedin"),
     (r"github", "links.github"),
-    (r"portfolio|personal\s*website|personal\s*url", "links.portfolio"),
-    (r"website", "links.website"),
+    (r"portfolio|personal\s*website|personal\s*url|portafolio|sitio\s*web|enlace\s*web", "links.portfolio"),
+    (r"website|sitio", "links.website"),
 
     # Professional
-    (r"headline|job\s*title", "professional.headline"),
-    (r"summary|about", "professional.summary"),
-    (r"years?\s*of\s*experience|experience\s*(years?|level)", "professional.years_of_experience"),
-    (r"current\s*title|current\s*role", "professional.current_title"),
-    (r"current\s*company|employer", "professional.current_company"),
+    (r"headline|job\s*title|t[ií]tulo\s*profesional|cargo", "professional.headline"),
+    (r"summary|about|acerca\s*de|resumen\s*profesional", "professional.summary"),
+    (r"years?\s*of\s*experience|experience\s*(years?|level)|a[ñn]os\s*de\s*experiencia|cu[aá]ntos\s*a[ñn]os", "professional.years_of_experience"),
+    (r"current\s*title|current\s*role|puesto\s*actual|cargo\s*actual", "professional.current_title"),
+    (r"current\s*company|employer|empresa\s*actual|empleador", "professional.current_company"),
 
     # Work authorization
-    (r"authorized?\s*to\s*work|work\s*authorization|right\s*to\s*work", "_auth_authorized"),
-    (r"sponsorship|visa\s*sponsorship|h-?1[bB]|need\s*visa", "_auth_sponsorship"),
-    (r"work\s*status|immigration\s*status|legal\s*status", "work_authorization.work_status"),
+    (r"authorized?\s*to\s*work|work\s*authorization|right\s*to\s*work|autorizaci[oó]n|autorizad[oa]|habilitaci[oó]n|habilitad[oa]\s*para\s*trabajar|permiso\s*de\s*trabajo", "_auth_authorized"),
+    (r"sponsorship|visa\s*sponsorship|h-?1[bB]|need\s*visa|patrocinio|requiere\s*visa|sponsor", "_auth_sponsorship"),
+    (r"work\s*status|immigration\s*status|legal\s*status|estado\s*migratorio|estatus\s*legal", "work_authorization.work_status"),
 
     # Education
-    (r"degree|education\s*level|highest\s*education", "education.degree"),
-    (r"field\s*of\s*study|major|specialization", "education.field"),
-    (r"university|school|college|institution", "education.school"),
-    (r"graduation\s*year|year\s*of\s*graduation", "education.graduation_year"),
+    (r"degree|education\s*level|highest\s*education|nivel\s*de\s*estudios|t[ií]tulo\s*acad[eé]mico|grado", "education.degree"),
+    (r"field\s*of\s*study|major|specialization|carrera|campo\s*de\s*estudio", "education.field"),
+    (r"university|school|college|institution|universidad|instituci[oó]n|facultad", "education.school"),
+    (r"graduation\s*year|year\s*of\s*graduation|a[ñn]o\s*de\s*graduaci[oó]n", "education.graduation_year"),
 
     # Salary
-    (r"salary\s*expectation|expected\s*salary|desired\s*salary|compensation", "salary.expected"),
-    (r"current\s*salary|present\s*salary", "salary.current"),
-    (r"salary\s*currency|currency", "salary.currency"),
+    (r"salary\s*expectation|expected\s*salary|desired\s*salary|compensation|salario|remuneraci[oó]n|pretensi[oó]n\s*salarial|sueldo", "salary.expected"),
+    (r"current\s*salary|present\s*salary|salario\s*actual", "salary.current"),
+    (r"salary\s*currency|currency|moneda", "salary.currency"),
 
     # Preferences
-    (r"notice\s*period|availability|start\s*date", "preferences.notice_period"),
-    (r"remote|work\s*from\s*home|telecommute", "_preferences_remote"),
+    (r"notice\s*period|availability|start\s*date|disponibilidad|per[ií]odo\s*de\s*preaviso|fecha\s*de\s*inicio", "preferences.notice_period"),
+    (r"remote|work\s*from\s*home|telecommute|remoto|trabajo\s*remoto", "_preferences_remote"),
 
     # Languages
-    (r"english\s*(level|proficiency|fluency)|english", "_lang_english"),
-    (r"spanish|español", "_lang_spanish"),
-    (r"portuguese|portugués", "_lang_portuguese"),
-    (r"french|français", "_lang_french"),
-    (r"german|deutsch", "_lang_german"),
+    (r"english\s*(level|proficiency|fluency)|english|ingl[eé]s", "_lang_english"),
+    (r"spanish|español|castellano", "_lang_spanish"),
+    (r"portuguese|portugu[eé]s", "_lang_portuguese"),
+    (r"french|fran[cç]ais|franc[eé]s", "_lang_french"),
+    (r"german|deutsch|alem[aá]n", "_lang_german"),
 ]
 
 
@@ -298,7 +298,7 @@ def match_field(question: str, profile: UserProfile) -> str | None:
             if key == "_preferences_remote":
                 return "Yes" if profile.preferences.remote_only else "No"
             if key.startswith("_lang_"):
-                lang = key.split("_")[1]
+                lang = key[len("_lang_"):]
                 return profile.languages.get(lang, None)
 
             value = get_profile_value(profile, key)

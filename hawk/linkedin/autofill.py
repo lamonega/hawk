@@ -20,17 +20,30 @@ _AUTOFILL_EVALUATE_JS = r"""
 
     // Find modal container
     const modal = document.querySelector('.jobs-easy-apply-modal') ||
-                  document.querySelector('[role="dialog"]') ||
+                  document.querySelector('div[data-test-modal-id="easy-apply-modal"]') ||
+                  document.querySelector('div[data-easy-apply-modal]') ||
+                  document.querySelector('div[role="dialog"]:has(.jobs-easy-apply-form-section__group)') ||
+                  document.querySelector('div[role="dialog"]:has(.fb-dash-form-element)') ||
+                  document.querySelector('div[role="dialog"]:has([data-test-form-element])') ||
+                  document.querySelector('div[role="dialog"]:has(button[aria-label*="Submit"], button[aria-label*="Enviar"], button[aria-label*="Continue"], button[aria-label*="Siguiente"], button[aria-label*="Review"], button[aria-label*="Revisar"])') ||
+                  document.querySelector('.artdeco-modal[role="dialog"]') ||
                   document.querySelector('.artdeco-modal') ||
-                  document.querySelector('div[data-test-modal]') ||
+                  document.querySelector('[role="dialog"]') ||
                   document.body;
 
     // Helper: trigger React / Angular / LinkedIn input events
     function setInputValue(el, val) {
-        if (!el) return;
+        if (!el || val === undefined || val === null) return;
+        const strVal = String(val);
         el.focus();
-        el.value = val;
-        el.setAttribute('value', val);
+        const proto = el.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
+        const nativeSetter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+        if (nativeSetter) {
+            nativeSetter.call(el, strVal);
+        } else {
+            el.value = strVal;
+        }
+        el.setAttribute('value', strVal);
         el.dispatchEvent(new Event('input', { bubbles: true }));
         el.dispatchEvent(new Event('change', { bubbles: true }));
         el.dispatchEvent(new Event('blur', { bubbles: true }));
@@ -38,121 +51,204 @@ _AUTOFILL_EVALUATE_JS = r"""
 
     // Helper: find clean label text for an element
     function getLabel(el) {
-        const parent = el.closest('.jobs-easy-apply-form-section__group, .fb-dash-form-element, div[data-test-form-element], fieldset') || el.parentElement;
-        const labelEl = el.labels && el.labels[0] ? el.labels[0] : (parent ? parent.querySelector('label, legend, .fb-dash-form-element__label') : null);
+        if (!el) return '';
+        if (el.id) {
+            try {
+                const labelFor = document.querySelector(`label[for="${el.id}"]`);
+                if (labelFor && labelFor.innerText.trim()) {
+                    return labelFor.innerText.split('\n')[0].replace(/\s+/g, ' ').trim();
+                }
+            } catch(e) {}
+        }
+        if (el.labels && el.labels[0] && el.labels[0].innerText.trim()) {
+            return el.labels[0].innerText.split('\n')[0].replace(/\s+/g, ' ').trim();
+        }
+        const parent = el.closest(
+            '.jobs-easy-apply-form-section__group, .fb-dash-form-element, ' +
+            'div[data-test-form-element], div[data-test-single-line-text-form-component], ' +
+            'div[data-test-form-builder-text-input], div[data-test-dropdown-form-component], ' +
+            'div[data-test-form-builder-radio-button-form-component], ' +
+            'div[data-test-text-entity-list-form-component], div.jobs-easy-apply-form-element, ' +
+            'fieldset, div.artdeco-text-input--container'
+        ) || el.parentElement;
+
+        const labelEl = parent ? parent.querySelector('label, legend, .fb-dash-form-element__label, span.t-14, p, h3') : null;
         let text = (labelEl ? labelEl.innerText : '') || el.getAttribute('aria-label') || el.getAttribute('placeholder') || el.name || '';
-        return text.replace(/\s+/g, ' ').trim();
+        return text.split('\n')[0].replace(/\s+/g, ' ').trim();
     }
 
-    const p = profileData;
-    const contact = p.contact || {};
-    const work = p.work_preferences || {};
-    const legal = p.legal || {};
+    const p = profileData || {};
+    const personal = p.personal || p.contact || {};
+    const links = p.links || {};
+    const professional = p.professional || {};
+    const auth = p.work_authorization || p.legal || {};
     const educ = p.education || {};
+    const salary = p.salary || {};
+    const pref = p.preferences || p.work_preferences || {};
+    const skills = p.skills || {};
+    const commonAnswers = p.common_answers || {};
 
-    // 1. Phone number inputs
+    const defaultYears = professional.years_of_experience || '2';
+    const phoneVal = personal.phone || '221 695 9945';
+    const emailVal = personal.email || 'lflamonega@gmail.com';
+    const cityVal = personal.city ? `${personal.city}, ${personal.country || 'Argentina'}` : 'Berisso, Argentina';
+    const postalVal = personal.postal_code || '1923';
+    
+    let rawLi = links.linkedin || 'https://www.linkedin.com/in/lflamonega';
+    if (!rawLi.startsWith('http')) rawLi = 'https://' + (rawLi.startsWith('www.') ? '' : 'www.') + rawLi;
+    else if (rawLi.startsWith('https://linkedin.com')) rawLi = rawLi.replace('https://linkedin.com', 'https://www.linkedin.com');
+    const liVal = rawLi;
+
+    let rawGit = links.github || 'https://github.com/lflamonega';
+    if (!rawGit.startsWith('http')) rawGit = 'https://' + rawGit;
+    const gitVal = rawGit;
+
+    const portVal = links.portfolio ? (links.portfolio.startsWith('http') ? links.portfolio : `https://${links.portfolio}`) : gitVal;
+    const salaryVal = salary.expected ? String(salary.expected).replace(/[^0-9]/g, '') || '950' : '950';
+
+    // 0. Check common_answers cache for any element
+    function checkCommonAnswers(label) {
+        const cleanL = label.toLowerCase().trim();
+        for (const [q, a] of Object.entries(commonAnswers)) {
+            if (cleanL.includes(q.toLowerCase().trim()) || q.toLowerCase().trim().includes(cleanL)) {
+                return a;
+            }
+        }
+        return null;
+    }
+
+    // 1. Phone inputs
     const phoneInputs = Array.from(modal.querySelectorAll('input[type="tel"], input[id*="phoneNumber"], input[name*="phone"], input[id*="phone"]'));
     for (const input of phoneInputs) {
         if (!input.value || input.value.trim() === '') {
-            const phoneVal = contact.phone || '2216959945';
             setInputValue(input, phoneVal);
             filled.push({ field: 'phone', value: phoneVal, label: getLabel(input) });
         }
     }
 
-    // Also check text inputs whose label mentions phone / teléfono / celular
-    const allTextInputs = Array.from(modal.querySelectorAll('input[type="text"], input[type="number"], input:not([type])'));
+    // 2. All text, number, and email inputs
+    const allTextInputs = Array.from(modal.querySelectorAll('input[type="text"], input[type="email"], input[type="number"], input[type="url"], input:not([type])'));
     for (const input of allTextInputs) {
-        const label = getLabel(input).toLowerCase();
+        const rawLabel = getLabel(input);
+        const label = rawLabel.toLowerCase();
         if (input.value && input.value.trim() !== '') continue;
 
-        if (label.includes('teléfono') || label.includes('telefono') || label.includes('phone') || label.includes('celular') || label.includes('móvil')) {
-            const phoneVal = contact.phone || '2216959945';
+        const cached = checkCommonAnswers(label);
+        if (cached !== null) {
+            setInputValue(input, cached);
+            filled.push({ field: 'cached_answer', value: cached, label: rawLabel });
+            continue;
+        }
+
+        if (label.includes('teléfono') || label.includes('telefono') || label.includes('phone') || label.includes('celular') || label.includes('móvil') || label.includes('mobile')) {
             setInputValue(input, phoneVal);
-            filled.push({ field: 'phone', value: phoneVal, label: label });
-        } else if (label.includes('ciudad') || label.includes('city') || label.includes('ubicación') || label.includes('location')) {
-            const cityVal = contact.city ? `${contact.city}, ${contact.country || 'Argentina'}` : 'Berisso, Argentina';
+            filled.push({ field: 'phone', value: phoneVal, label: rawLabel });
+        } else if (label.includes('email') || label.includes('correo') || label.includes('dirección de correo') || input.type === 'email') {
+            setInputValue(input, emailVal);
+            filled.push({ field: 'email', value: emailVal, label: rawLabel });
+        } else if (label.includes('first name') || (label.includes('nombre') && !label.includes('completo') && !label.includes('empresa'))) {
+            const fName = personal.first_name || 'Laureano';
+            setInputValue(input, fName);
+            filled.push({ field: 'first_name', value: fName, label: rawLabel });
+        } else if (label.includes('last name') || label.includes('apellido') || label.includes('surname')) {
+            const lName = personal.last_name || 'Francisco Lamonega';
+            setInputValue(input, lName);
+            filled.push({ field: 'last_name', value: lName, label: rawLabel });
+        } else if (label.includes('full name') || label.includes('nombre completo')) {
+            const fullName = `${personal.first_name || 'Laureano'} ${personal.last_name || 'Francisco Lamonega'}`.trim();
+            setInputValue(input, fullName);
+            filled.push({ field: 'full_name', value: fullName, label: rawLabel });
+        } else if (label.includes('ciudad') || label.includes('city') || label.includes('ubicación') || label.includes('location') || label.includes('localidad')) {
             setInputValue(input, cityVal);
-            filled.push({ field: 'city', value: cityVal, label: label });
-        } else if (label.includes('código postal') || label.includes('postal code') || label.includes('zip')) {
-            const zipVal = contact.postal_code || '1923';
-            setInputValue(input, zipVal);
-            filled.push({ field: 'postal_code', value: zipVal, label: label });
-        } else if (label.includes('años de experiencia') || label.includes('years of experience') || label.includes('cuántos años') || label.includes('how many years')) {
-            // Numeric experience questions
-            let expYears = '2';
-            if (label.includes('python') || label.includes('devops') || label.includes('linux') || label.includes('git') || label.includes('docker') || label.includes('aws') || label.includes('cloud')) {
-                expYears = '2';
-            } else if (label.includes('kubernetes') || label.includes('terraform') || label.includes('gcp') || label.includes('azure') || label.includes('ci/cd')) {
-                expYears = '2';
-            } else {
-                expYears = '2';
+            filled.push({ field: 'city', value: cityVal, label: rawLabel });
+        } else if (label.includes('código postal') || label.includes('codigo postal') || label.includes('postal code') || label.includes('zip')) {
+            setInputValue(input, postalVal);
+            filled.push({ field: 'postal_code', value: postalVal, label: rawLabel });
+        } else if (label.includes('años de experiencia') || label.includes('anos de experiencia') || label.includes('years of experience') || label.includes('cuántos años') || label.includes('cuantos anos') || label.includes('how many years')) {
+            // Check specific skill match in skills dict
+            let expYears = defaultYears;
+            for (const [skillName, skillYears] of Object.entries(skills)) {
+                if (label.includes(skillName.toLowerCase())) {
+                    expYears = String(skillYears);
+                    break;
+                }
             }
             setInputValue(input, expYears);
-            filled.push({ field: 'experience_years', value: expYears, label: label });
-        } else if (label.includes('salario') || label.includes('salary') || label.includes('remuneración') || label.includes('pretendida') || label.includes('compensation')) {
-            const salVal = work.salary_expectation ? String(work.salary_expectation) : '950';
-            setInputValue(input, salVal);
-            filled.push({ field: 'salary', value: salVal, label: label });
+            filled.push({ field: 'experience_years', value: expYears, label: rawLabel });
+        } else if (label.includes('salario') || label.includes('salary') || label.includes('remuneración') || label.includes('remuneracion') || label.includes('pretendida') || label.includes('compensation') || label.includes('sueldo')) {
+            setInputValue(input, salaryVal);
+            filled.push({ field: 'salary', value: salaryVal, label: rawLabel });
         } else if (label.includes('linkedin') || label.includes('perfil')) {
-            const liVal = contact.linkedin || 'https://www.linkedin.com/in/lflamonega';
             setInputValue(input, liVal);
-            filled.push({ field: 'linkedin', value: liVal, label: label });
-        } else if (label.includes('github') || label.includes('portfolio') || label.includes('web') || label.includes('site')) {
-            const gitVal = contact.github || 'https://github.com/lflamonega';
+            filled.push({ field: 'linkedin', value: liVal, label: rawLabel });
+        } else if (label.includes('github')) {
             setInputValue(input, gitVal);
-            filled.push({ field: 'github', value: gitVal, label: label });
+            filled.push({ field: 'github', value: gitVal, label: rawLabel });
+        } else if (label.includes('portfolio') || label.includes('portafolio') || label.includes('web') || label.includes('sitio') || label.includes('site') || label.includes('url')) {
+            setInputValue(input, portVal);
+            filled.push({ field: 'portfolio', value: portVal, label: rawLabel });
         } else if (input.required || input.getAttribute('aria-required') === 'true') {
-            unknown.push({ type: 'text', label: label, name: input.name });
+            unknown.push({ type: 'text', label: rawLabel, name: input.name });
         }
     }
 
-    // 1.1 Textareas (Portfolio, Links, Cover Letter, Notes)
+    // 3. Textareas (Portfolio, Links, Cover Letter, Summary)
     const textareas = Array.from(modal.querySelectorAll('textarea'));
     for (const ta of textareas) {
-        const label = getLabel(ta).toLowerCase();
+        const rawLabel = getLabel(ta);
+        const label = rawLabel.toLowerCase();
         if (ta.value && ta.value.trim() !== '') continue;
 
-        if (label.includes('github') || label.includes('portfolio') || label.includes('web') || label.includes('link') || label.includes('url')) {
-            const gitVal = contact.github || 'https://github.com/lflamonega';
+        const cached = checkCommonAnswers(label);
+        if (cached !== null) {
+            setInputValue(ta, cached);
+            filled.push({ field: 'cached_textarea', value: cached, label: rawLabel });
+            continue;
+        }
+
+        if (label.includes('github')) {
             setInputValue(ta, gitVal);
-            filled.push({ field: 'portfolio_textarea', value: gitVal, label: label });
+            filled.push({ field: 'github_textarea', value: gitVal, label: rawLabel });
+        } else if (label.includes('portfolio') || label.includes('portafolio') || label.includes('web') || label.includes('link') || label.includes('url') || label.includes('enlace')) {
+            setInputValue(ta, portVal);
+            filled.push({ field: 'portfolio_textarea', value: portVal, label: rawLabel });
         } else if (label.includes('linkedin') || label.includes('perfil')) {
-            const liVal = contact.linkedin || 'https://www.linkedin.com/in/lflamonega';
             setInputValue(ta, liVal);
-            filled.push({ field: 'linkedin_textarea', value: liVal, label: label });
-        } else if (label.includes('cover') || label.includes('carta') || label.includes('presentación') || label.includes('summary')) {
-            const sumVal = p.summary || '';
+            filled.push({ field: 'linkedin_textarea', value: liVal, label: rawLabel });
+        } else if (label.includes('cover') || label.includes('carta') || label.includes('presentación') || label.includes('presentacion') || label.includes('summary') || label.includes('resumen') || label.includes('about')) {
+            const sumVal = professional.summary || p.summary || '';
             if (sumVal) {
                 setInputValue(ta, sumVal);
-                filled.push({ field: 'summary_textarea', value: sumVal.slice(0, 30), label: label });
+                filled.push({ field: 'summary_textarea', value: sumVal.slice(0, 30), label: rawLabel });
             }
         }
     }
 
-    // 2. Selects / Dropdowns
+    // 4. Selects / Dropdowns
     const selects = Array.from(modal.querySelectorAll('select'));
     for (const select of selects) {
-        const label = getLabel(select).toLowerCase();
+        const rawLabel = getLabel(select);
+        const label = rawLabel.toLowerCase();
         let chosenVal = null;
         const options = Array.from(select.options);
 
         const hasArgentina = options.find(o => o.text.trim().toLowerCase() === 'argentina' || o.text.includes('Argentina') || o.value.toLowerCase() === 'ar');
-        if (hasArgentina && !chosenVal) {
-            chosenVal = hasArgentina.value;
-        } else if (label.includes('país') || label.includes('country') || label.includes('código de país') || label.includes('phone country') || label.includes('residencia') || label.includes('nationality')) {
+        
+        if (label.includes('país') || label.includes('pais') || label.includes('country') || label.includes('código de país') || label.includes('phone country') || label.includes('residencia') || label.includes('nationality') || label.includes('nacionalidad')) {
             const opt = options.find(o => o.value.toLowerCase() === 'ar' || o.text.toLowerCase().includes('argentina') || o.text.includes('+54'));
             if (opt) chosenVal = opt.value;
+        } else if (hasArgentina && !chosenVal && !select.value) {
+            chosenVal = hasArgentina.value;
         } else if (label.includes('ciudad') || label.includes('city') || label.includes('location') || label.includes('provincia') || label.includes('state')) {
             const opt = options.find(o => o.text.toLowerCase().includes('buenos aires') || o.text.toLowerCase().includes('berisso') || o.text.toLowerCase().includes('la plata'));
             if (opt) chosenVal = opt.value;
-        } else if (label.includes('inglés') || label.includes('english') || label.includes('idioma') || label.includes('language')) {
-            const opt = options.find(o => o.text.toLowerCase().includes('professional') || o.text.toLowerCase().includes('avanzado') || o.text.toLowerCase().includes('c1') || o.text.toLowerCase().includes('b2') || o.text.toLowerCase().includes('conversational') || o.text.toLowerCase().includes('intermedio'));
+        } else if (label.includes('inglés') || label.includes('ingles') || label.includes('english') || label.includes('idioma') || label.includes('language')) {
+            const opt = options.find(o => o.text.toLowerCase().includes('professional') || o.text.toLowerCase().includes('avanzado') || o.text.toLowerCase().includes('c1') || o.text.toLowerCase().includes('b2') || o.text.toLowerCase().includes('conversational') || o.text.toLowerCase().includes('intermedio') || o.text.toLowerCase().includes('fluent'));
             if (opt) chosenVal = opt.value;
-        } else if (label.includes('educación') || label.includes('degree') || label.includes('nivel de estudios') || label.includes('título')) {
-            const opt = options.find(o => o.text.toLowerCase().includes('bachelor') || o.text.toLowerCase().includes('licenciatura') || o.text.toLowerCase().includes('universitario') || o.text.toLowerCase().includes('college'));
+        } else if (label.includes('educación') || label.includes('educacion') || label.includes('degree') || label.includes('nivel de estudios') || label.includes('título') || label.includes('titulo')) {
+            const opt = options.find(o => o.text.toLowerCase().includes('bachelor') || o.text.toLowerCase().includes('licenciatura') || o.text.toLowerCase().includes('universitario') || o.text.toLowerCase().includes('college') || o.text.toLowerCase().includes('grada') || o.text.toLowerCase().includes('completo'));
             if (opt) chosenVal = opt.value;
-        } else if (label.includes('autorizad') || label.includes('authorized') || label.includes('permit') || label.includes('legal')) {
+        } else if (label.includes('autorizad') || label.includes('authorized') || label.includes('permit') || label.includes('legal') || label.includes('habilitad')) {
             const opt = options.find(o => o.text.toLowerCase() === 'yes' || o.text.toLowerCase() === 'sí' || o.text.toLowerCase() === 'si');
             if (opt) chosenVal = opt.value;
         } else if (label.includes('patrocinio') || label.includes('sponsorship') || label.includes('sponsor') || label.includes('visa')) {
@@ -169,13 +265,13 @@ _AUTOFILL_EVALUATE_JS = r"""
             select.dispatchEvent(new Event('input', { bubbles: true }));
             select.dispatchEvent(new Event('change', { bubbles: true }));
             select.dispatchEvent(new Event('blur', { bubbles: true }));
-            filled.push({ field: 'select', value: chosenVal, label: label });
+            filled.push({ field: 'select', value: chosenVal, label: rawLabel });
         } else if (!select.value && (select.required || select.getAttribute('aria-required') === 'true')) {
-            unknown.push({ type: 'select', label: label, options: options.map(o => o.text) });
+            unknown.push({ type: 'select', label: rawLabel, options: options.map(o => o.text) });
         }
     }
 
-    // 3. Radio groups (Yes/No questions)
+    // 5. Radio groups (Yes/No questions)
     const fieldsets = Array.from(modal.querySelectorAll('fieldset, .fb-dash-form-element, div[data-test-form-builder-radio-button-form-component]'));
     for (const fs of fieldsets) {
         const radios = Array.from(fs.querySelectorAll('input[type="radio"]'));
@@ -183,74 +279,96 @@ _AUTOFILL_EVALUATE_JS = r"""
         const anyChecked = radios.some(r => r.checked);
         if (anyChecked) continue;
 
-        const legend = (fs.querySelector('legend, label')?.innerText || '').toLowerCase();
+        const rawLegend = fs.querySelector('legend, label, .fb-dash-form-element__label')?.innerText || '';
+        const legend = rawLegend.toLowerCase();
         let targetRadio = null;
 
-        // Positive questions (Yes)
-        if (legend.includes('autorizad') || legend.includes('authorized') || legend.includes('argentina') ||
-            legend.includes('experience') || legend.includes('experiencia') || legend.includes('comfortable') ||
-            legend.includes('cómodo') || legend.includes('background check') || legend.includes('agree') ||
-            legend.includes('remoto') || legend.includes('remote') || legend.includes('disponib') || legend.includes('available')) {
+        const cached = checkCommonAnswers(legend);
+        if (cached !== null) {
             targetRadio = radios.find(r => {
                 const txt = (r.closest('label')?.innerText || r.value || '').toLowerCase();
-                return txt.includes('yes') || txt.includes('sí') || txt.includes('si');
+                return txt.includes(cached.toLowerCase()) || r.value.toLowerCase() === cached.toLowerCase();
             });
         }
-        // Negative questions (No sponsorship needed)
-        else if (legend.includes('sponsorship') || legend.includes('patrocinio') || legend.includes('sponsor') || legend.includes('visa required') || legend.includes('requiere visa')) {
-            targetRadio = radios.find(r => {
-                const txt = (r.closest('label')?.innerText || r.value || '').toLowerCase();
-                return txt.includes('no');
-            });
-        }
-        // Default to Yes for affirmative questions
-        else {
-            targetRadio = radios.find(r => {
-                const txt = (r.closest('label')?.innerText || r.value || '').toLowerCase();
-                return txt.includes('yes') || txt.includes('sí') || txt.includes('si');
-            });
+
+        if (!targetRadio) {
+            // Negative questions: Visa sponsorship, criminal record, restrictions -> NO
+            if (legend.includes('sponsorship') || legend.includes('patrocinio') || legend.includes('sponsor') || 
+                legend.includes('visa required') || legend.includes('requiere visa') || legend.includes('require visa') ||
+                legend.includes('visa sponsorship') || legend.includes('need visa')) {
+                targetRadio = radios.find(r => {
+                    const txt = (r.closest('label')?.innerText || r.value || '').toLowerCase();
+                    return txt === 'no' || txt.includes('no');
+                });
+            }
+            // Positive questions: Legal authorization, remote, experience, comfortable, etc. -> YES
+            else if (legend.includes('autorizad') || legend.includes('autorizaci') || legend.includes('authorized') || legend.includes('argentina') ||
+                     legend.includes('experience') || legend.includes('experiencia') || legend.includes('comfortable') ||
+                     legend.includes('cómodo') || legend.includes('comodo') || legend.includes('background check') || 
+                     legend.includes('agree') || legend.includes('acepto') || legend.includes('de acuerdo') ||
+                     legend.includes('remoto') || legend.includes('remote') || legend.includes('disponib') || 
+                     legend.includes('available') || legend.includes('habilitad') || legend.includes('habilitaci') || legend.includes('right to work')) {
+                targetRadio = radios.find(r => {
+                    const txt = (r.closest('label')?.innerText || r.value || '').toLowerCase();
+                    return txt.includes('yes') || txt.includes('sí') || txt.includes('si');
+                });
+            }
+            // Default to Yes for standard affirmative screening questions
+            else {
+                targetRadio = radios.find(r => {
+                    const txt = (r.closest('label')?.innerText || r.value || '').toLowerCase();
+                    return txt.includes('yes') || txt.includes('sí') || txt.includes('si');
+                });
+            }
         }
 
         if (targetRadio) {
             targetRadio.click();
             targetRadio.checked = true;
             targetRadio.dispatchEvent(new Event('change', { bubbles: true }));
-            filled.push({ field: 'radio', value: targetRadio.value, label: legend.slice(0, 50) });
+            filled.push({ field: 'radio', value: targetRadio.value, label: rawLegend.slice(0, 60) });
         } else {
-            unknown.push({ type: 'radio', label: legend.slice(0, 50) });
+            unknown.push({ type: 'radio', label: rawLegend.slice(0, 60) });
         }
     }
 
-    // 4. Uncheck "Follow company"
+    // 6. Uncheck "Follow company" / "Seguir a la empresa"
     const checkboxes = Array.from(modal.querySelectorAll('input[type="checkbox"]'));
     for (const cb of checkboxes) {
-        const label = getLabel(cb).toLowerCase();
-        if (label.includes('follow') || label.includes('seguir') || label.includes('empresa') || cb.name.includes('followCompany')) {
+        const rawLabel = getLabel(cb);
+        const label = rawLabel.toLowerCase();
+        if (label.includes('follow') || label.includes('seguir') || label.includes('empresa') || (cb.name && cb.name.includes('followCompany'))) {
             if (cb.checked) {
                 cb.click();
                 cb.checked = false;
                 cb.dispatchEvent(new Event('change', { bubbles: true }));
-                filled.push({ field: 'unfollow_company', value: 'unchecked', label: label });
+                filled.push({ field: 'unfollow_company', value: 'unchecked', label: rawLabel });
             }
         }
     }
 
-    // 5. Detect next/submit buttons
+    // 7. Detect Next/Submit buttons
     const submitBtn = modal.querySelector('button[aria-label*="Submit application"]') ||
                       modal.querySelector('button[aria-label*="Enviar solicitud"]') ||
+                      modal.querySelector('button[aria-label*="Enviar candidatura"]') ||
                       Array.from(modal.querySelectorAll('button')).find(b => {
                           const t = (b.innerText || '').toLowerCase().trim();
-                          return t === 'submit' || t === 'enviar solicitud' || t === 'enviar';
+                          return t === 'submit' || t === 'enviar solicitud' || t === 'enviar' || t === 'enviar candidatura';
                       });
 
     const nextBtn = modal.querySelector('button[aria-label*="Continue"]') ||
                     modal.querySelector('button[aria-label*="Review"]') ||
+                    modal.querySelector('button[aria-label*="Next"]') ||
                     modal.querySelector('button[aria-label*="Siguiente"]') ||
+                    modal.querySelector('button[aria-label*="Continuar"]') ||
                     modal.querySelector('button[aria-label*="Revisar"]') ||
+                    modal.querySelector('button[aria-label*="Avançar"]') ||
                     modal.querySelector('button.artdeco-button--primary') ||
                     Array.from(modal.querySelectorAll('button')).find(b => {
                         const t = (b.innerText || '').toLowerCase().trim();
-                        return t === 'next' || t === 'continue' || t === 'review' || t === 'siguiente' || t === 'continuar' || t === 'revisar';
+                        return t === 'next' || t === 'continue' || t === 'review' || 
+                               t === 'siguiente' || t === 'continuar' || t === 'revisar' || 
+                               t === 'avançar' || t === 'seguinte' || t === 'suivant';
                     });
 
     return {
@@ -319,15 +437,20 @@ async def step_easy_apply_wizard(auto_advance: bool = True) -> dict[str, Any]:
     # 3. Advance to next step
     next_selectors = [
         'button[aria-label*="Siguiente"]',
+        'button[aria-label*="Continuar"]',
         'button[aria-label*="Revisar"]',
         'button[aria-label*="Continue"]',
         'button[aria-label*="Review"]',
+        'button[aria-label*="Next"]',
+        'button[aria-label*="Avançar"]',
         'button.artdeco-button--primary',
         'button:has-text("Siguiente")',
         'button:has-text("Continuar")',
         'button:has-text("Revisar")',
         'button:has-text("Next")',
+        'button:has-text("Continue")',
         'button:has-text("Review")',
+        'button:has-text("Avançar")',
     ]
 
     clicked = False
@@ -336,6 +459,7 @@ async def step_easy_apply_wizard(auto_advance: bool = True) -> dict[str, Any]:
             btn = page.locator(selector).first
             if await btn.is_visible(timeout=1500):
                 btn_text = await btn.inner_text()
+                await btn.scroll_into_view_if_needed()
                 await btn.click(timeout=3000)
                 await human_delay()
                 clicked = True
@@ -385,6 +509,7 @@ async def auto_apply_full_flow(max_steps: int = 8) -> dict[str, Any]:
             modal_info = await page.evaluate("""
                 () => {
                     const modal = document.querySelector('.jobs-easy-apply-modal') ||
+                                  document.querySelector('div[data-test-modal-id="easy-apply-modal"]') ||
                                   document.querySelector('[role="dialog"]') ||
                                   document.querySelector('.artdeco-modal');
                     if (!modal) return { open: false };
@@ -393,7 +518,7 @@ async def auto_apply_full_flow(max_steps: int = 8) -> dict[str, Any]:
                                       modal.querySelector('button[aria-label*="Enviar"]') ||
                                       Array.from(modal.querySelectorAll('button')).find(b => {
                                           const t = (b.innerText || '').toLowerCase().trim();
-                                          return t === 'submit' || t === 'enviar solicitud' || t === 'enviar';
+                                          return t === 'submit' || t === 'enviar solicitud' || t === 'enviar' || t === 'enviar candidatura';
                                       });
                     return {
                         open: true,
@@ -423,7 +548,7 @@ async def auto_apply_full_flow(max_steps: int = 8) -> dict[str, Any]:
 
             # Check if there are validation errors on screen
             errors = await page.evaluate("""
-                () => Array.from(document.querySelectorAll('.artdeco-inline-feedback--error, [data-test-form-element-error-messages]'))
+                () => Array.from(document.querySelectorAll('.artdeco-inline-feedback--error, [data-test-form-element-error-messages], .fb-dash-form-element__error-message'))
                            .map(e => e.innerText.trim()).filter(e => e.length > 0)
             """)
             if errors:
