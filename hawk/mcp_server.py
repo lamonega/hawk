@@ -138,16 +138,52 @@ async def browser_select(element_index: int, value: str) -> str:
 
     Args:
         element_index: The index of the select element.
-        value: The value to select.
+        value: The value or label text to select.
 
     Returns:
         Result of the select action.
     """
-    import sys
-    sys.modules.pop("hawk.browser.dom", None)
-    import hawk.browser.dom
+    from hawk.browser.driver import get_page
+    page = get_page()
+    if page is None:
+        return "error: Browser not started"
 
-    return await hawk.browser.dom.select_element(element_index, value)
+    try:
+        # Match option across all dropdowns in active modal or document
+        selected = await page.evaluate("""
+            (targetVal) => {
+                const modal = document.querySelector('.jobs-easy-apply-modal') ||
+                              document.querySelector('[role="dialog"]') ||
+                              document.querySelector('.artdeco-modal') ||
+                              document.body;
+                const selects = Array.from(modal.querySelectorAll('select'));
+                const valLower = targetVal.toLowerCase().trim();
+
+                for (const sel of selects) {
+                    for (let i = 0; i < sel.options.length; i++) {
+                        const opt = sel.options[i];
+                        const optText = (opt.text || '').toLowerCase().trim();
+                        const optVal = (opt.value || '').toLowerCase().trim();
+                        if (optText === valLower || optText.includes(valLower) || optVal === valLower) {
+                            sel.selectedIndex = i;
+                            opt.selected = true;
+                            sel.value = opt.value;
+                            sel.dispatchEvent(new Event('input', { bubbles: true }));
+                            sel.dispatchEvent(new Event('change', { bubbles: true }));
+                            sel.dispatchEvent(new Event('blur', { bubbles: true }));
+                            return opt.text.trim();
+                        }
+                    }
+                }
+                return null;
+            }
+        """, value)
+
+        if selected:
+            return f"Selected: '{selected}'"
+        return f"error: Could not find option matching '{value}'"
+    except Exception as e:
+        return f"error: {e}"
 
 
 @server.tool()
