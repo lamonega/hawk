@@ -121,22 +121,24 @@ def _ensure_screenshot_dir() -> Path:
     return SCREENSHOT_DIR
 
 
-def human_delay() -> None:
+import asyncio
+
+async def human_delay() -> None:
     """Sleep a random duration between min_delay and max_delay from settings."""
     settings = get_settings()
     delay = random.uniform(settings.apply.min_delay, settings.apply.max_delay)
     logger.debug("Human delay: {:.1f}s", delay)
-    time.sleep(delay)
+    await asyncio.sleep(delay)
 
 
-def _take_debug_screenshot(step_name: str) -> str | None:
+async def _take_debug_screenshot(step_name: str) -> str | None:
     """Take a screenshot for debugging, return path or None."""
     page = get_page()
     if page is None:
         return None
     try:
         path = _ensure_screenshot_dir() / f"{step_name}.png"
-        page.screenshot(path=str(path), full_page=False)
+        await page.screenshot(path=str(path), full_page=False)
         logger.debug("Screenshot saved: {}", path)
         return str(path)
     except Exception as e:
@@ -144,7 +146,7 @@ def _take_debug_screenshot(step_name: str) -> str | None:
         return None
 
 
-def _get_progress_percentage() -> int | None:
+async def _get_progress_percentage() -> int | None:
     """Extract progress percentage from the Easy Apply modal (e.g. 'Step 2 of 4 — 50%').
 
     Returns the percentage as int, or None if not found.
@@ -153,7 +155,7 @@ def _get_progress_percentage() -> int | None:
     if page is None:
         return None
     try:
-        text = page.evaluate(
+        text = await page.evaluate(
             """
             () => {
                 const modal = document.querySelector('.jobs-easy-apply-modal') ||
@@ -223,7 +225,20 @@ def build_search_url(
     return f"{base}?{query}" if query else base
 
 
-def extract_jobs_list() -> str:
+
+async def wait_for_jobs() -> None:
+    """Wait for job links to load in the split view."""
+    page = get_page()
+    if page:
+        try:
+            # Wait for at least one job link to appear
+            await page.wait_for_timeout(5000)
+            await page.wait_for_selector('a[href*="/jobs/view/"]', timeout=15000)
+            await human_delay()
+        except Exception:
+            pass
+
+async def extract_jobs_list() -> str:
     """Extract job cards from a LinkedIn search results page.
 
     Returns JSON array of job summaries. Tries multiple selector strategies
@@ -234,177 +249,182 @@ def extract_jobs_list() -> str:
     if page is None:
         return json.dumps({"error": "Browser not started"})
 
-    try:
-        jobs = page.evaluate(
-            """
-            () => {
-                // Strategy 1: try known card container selectors
-                const cardSelectors = [
-                    '.jobs-search-results__list-item',
-                    '.scaffold-layout__list li',
-                    '[data-view-name="job-card"]',
-                    '.job-card-container',
-                    '[data-job-id]',
-                    '[data-occludable-job-id]',
-                    'li[class*="jobs-search"]',
-                    'li[class*="job-card"]',
-                ];
+    await wait_for_jobs()
 
-                let cards = [];
-                for (const sel of cardSelectors) {
-                    cards = document.querySelectorAll(sel);
-                    if (cards.length > 0) break;
-                }
-
-                // Strategy 2 (fallback): scrape all /jobs/view/ links on the page
-                if (cards.length === 0) {
+    for attempt in range(3):
+        try:
+            jobs = await page.evaluate(
+                r"""
+                () => {
                     const seen = new Set();
-                    const links = document.querySelectorAll('a[href*="/jobs/view/"]');
-                    return Array.from(links)
-                        .map(link => {
-                            const cleanHref = link.href.split('?')[0];
-                            const idMatch = cleanHref.match(/view\\/([\\d]+)\\//);
-                            if (!idMatch || seen.has(idMatch[1])) return null;
-                            seen.add(idMatch[1]);
+                    const jobs = [];
+
+                    const cardSelectors = [
+                        'ul.jobs-search__results-list > li',
+                        '.scaffold-layout__list-container > li',
+                        '.jobs-search-results-list > li',
+                        'li:has(a[href*="/jobs/view/"])',
+                        '.job-card-container',
+                        '.base-card',
+                    ];
+
+                    let cards = [];
+                    for (const sel of cardSelectors) {
+                        const found = document.querySelectorAll(sel);
+                        if (found.length > 0) {
+                            cards = Array.from(found);
+                            break;
+                        }
+                    }
+
+                    if (cards.length > 0) {
+                        for (const card of cards) {
+                            const linkEl = card.querySelector('a[href*="/jobs/view/"]') || card.querySelector('a');
+                            if (!linkEl) continue;
+
+                            const href = linkEl.href.split('?')[0];
+                            const idMatch = href.match(/view\/(?:.*-)?(\d+)/) || href.match(/(\d{8,12})/);
+                            const jobId = idMatch ? idMatch[1] : '';
+                            if (!jobId || seen.has(jobId)) continue;
+                            seen.add(jobId);
+
+                            const titleEl = card.querySelector('.base-search-card__title') ||
+                                            card.querySelector('.job-card-list__title--link') ||
+                                            card.querySelector('.job-card-list__title') ||
+                                            card.querySelector('h3') ||
+                                            card.querySelector('h4') ||
+                                            card.querySelector('strong') ||
+                                            linkEl;
+                            const role = titleEl ? titleEl.innerText.trim() : '';
+
+                            const companyEl = card.querySelector('.base-search-card__subtitle') ||
+                                              card.querySelector('.job-card-container__primary-description') ||
+                                              card.querySelector('.job-card-container__company-name') ||
+                                              card.querySelector('.artdeco-entity-lockup__subtitle') ||
+                                              card.querySelector('h4.base-search-card__subtitle a') ||
+                                              card.querySelector('[class*="company"]') ||
+                                              card.querySelector('[class*="subtitle"]');
+                            const company = companyEl ? companyEl.innerText.trim() : '';
+
+                            const locationEl = card.querySelector('.job-search-card__location') ||
+                                               card.querySelector('.job-card-container__metadata-item') ||
+                                               card.querySelector('.artdeco-entity-lockup__caption') ||
+                                               card.querySelector('.job-card-container__location') ||
+                                               card.querySelector('[class*="location"]') ||
+                                               card.querySelector('[class*="caption"]');
+                            const location = locationEl ? locationEl.innerText.trim() : '';
+
+                            const cardText = card.innerText.toLowerCase();
+                            const easyApply = cardText.includes('solicitud sencilla') ||
+                                              cardText.includes('easy apply') ||
+                                              !!card.querySelector('.job-card-container__apply-method') ||
+                                              !!card.querySelector('[data-testid="job-card-list-item__easy-apply"]') ||
+                                              !!card.querySelector('[class*="easy-apply"]');
+
+                            const alreadyApplied = cardText.includes('solicitado') ||
+                                                   cardText.includes('applied') ||
+                                                   !!card.querySelector('.jobs-search-results-list__state-message') ||
+                                                   !!card.querySelector('.artdeco-inline-feedback');
+
+                            if (role) {
+                                jobs.push({
+                                    job_id: jobId,
+                                    role: role,
+                                    company: company,
+                                    location: location,
+                                    link: href,
+                                    easy_apply: easyApply,
+                                    already_applied: alreadyApplied,
+                                });
+                            }
+                        }
+                    }
+
+                    // Fallback if cards selector returned nothing
+                    if (jobs.length === 0) {
+                        const links = Array.from(document.querySelectorAll('a[href*="/jobs/view/"]'));
+                        for (const link of links) {
+                            const href = link.href.split('?')[0];
+                            const idMatch = href.match(/view\/(?:.*-)?(\d+)/) || href.match(/(\d{8,12})/);
+                            const jobId = idMatch ? idMatch[1] : '';
+                            if (!jobId || seen.has(jobId)) continue;
+                            seen.add(jobId);
 
                             const card = link.closest('li') || link.parentElement;
-                            const titleEl = card
-                                ? (card.querySelector('strong') ||
-                                   card.querySelector('[class*="title"]'))
-                                : null;
-                            const companyEl = card
-                                ? card.querySelector('[class*="company"], [class*="subtitle"]')
-                                : null;
-                            const locationEl = card
-                                ? card.querySelector('[class*="location"], [class*="caption"]')
-                                : null;
-                            const easyApplyEl = card
-                                ? card.querySelector('[class*="easy-apply"], [class*="apply"]')
-                                : null;
+                            const role = link.innerText.trim() || link.getAttribute('aria-label') || '';
+                            const cardText = card ? card.innerText.toLowerCase() : '';
 
-                            return {
-                                job_id: idMatch[1],
-                                role: titleEl
-                                    ? titleEl.innerText.trim()
-                                    : (link.getAttribute('aria-label') || link.innerText.trim()),
-                                company: companyEl ? companyEl.innerText.trim() : '',
-                                location: locationEl ? locationEl.innerText.trim() : '',
-                                link: cleanHref,
-                                easy_apply: !!easyApplyEl,
-                                already_applied: false,
-                            };
-                        })
-                        .filter(j => j && j.job_id);
+                            if (role) {
+                                jobs.push({
+                                    job_id: jobId,
+                                    role: role,
+                                    company: '',
+                                    location: '',
+                                    link: href,
+                                    easy_apply: cardText.includes('solicitud sencilla') || cardText.includes('easy apply'),
+                                    already_applied: cardText.includes('solicitado') || cardText.includes('applied'),
+                                });
+                            }
+                        }
+                    }
+
+                    return jobs;
                 }
-
-                // Process cards found via Strategy 1
-                const seen = new Set();
-                return Array.from(cards)
-                    .map(card => {
-                        const titleEl =
-                            card.querySelector('.job-card-list__title--link') ||
-                            card.querySelector('a.job-card-container__link') ||
-                            card.querySelector('a[data-control-name="job_card_click"]') ||
-                            card.querySelector('strong') ||
-                            card.querySelector('a[aria-label]');
-
-                        const companyEl =
-                            card.querySelector('.artdeco-entity-lockup__subtitle') ||
-                            card.querySelector('.job-card-container__primary-description') ||
-                            card.querySelector('.job-card-container__company-name') ||
-                            card.querySelector('[class*="company"]') ||
-                            card.querySelector('[class*="subtitle"]');
-
-                        const locationEl =
-                            card.querySelector('.artdeco-entity-lockup__caption') ||
-                            card.querySelector('.job-card-container__metadata-item') ||
-                            card.querySelector('.job-card-container__location') ||
-                            card.querySelector('[class*="location"]') ||
-                            card.querySelector('[class*="caption"]');
-
-                        const linkEl =
-                            card.querySelector('a[href*="/jobs/view/"]') ||
-                            card.querySelector('a');
-
-                        const easyApplyEl =
-                            card.querySelector('.job-card-container__apply-method') ||
-                            card.querySelector('[data-testid="job-card-list-item__easy-apply"]') ||
-                            card.querySelector('[class*="easy-apply"]');
-
-                        const appliedBadge =
-                            card.querySelector('.jobs-search-results-list__state-message') ||
-                            card.querySelector('.artdeco-inline-feedback');
-
-                        // Also try data attributes for job ID
-                        const dataJobId =
-                            card.getAttribute('data-job-id') ||
-                            card.getAttribute('data-occludable-job-id') ||
-                            (card.getAttribute('data-entity-urn') || '').match(/\\d+/)?.[0];
-
-                        const link = linkEl ? linkEl.href.split('?')[0] : '';
-                        const idMatch = link.match(/view\\/([\\d]+)\\//);
-                        const job_id = idMatch ? idMatch[1] : (dataJobId || '');
-
-                        if (!job_id || seen.has(job_id)) return null;
-                        seen.add(job_id);
-
-                        return {
-                            job_id,
-                            role: titleEl ? titleEl.innerText.trim() : '',
-                            company: companyEl ? companyEl.innerText.trim() : '',
-                            location: locationEl ? locationEl.innerText.trim() : '',
-                            link: link,
-                            easy_apply: !!easyApplyEl,
-                            already_applied: !!appliedBadge,
-                        };
-                    })
-                    .filter(j => j && j.role && j.link);
-            }
-            """
-        )
-
-        return json.dumps(jobs, indent=2)
-    except Exception as e:
-        return json.dumps({"error": str(e)})
+                """
+            )
+            return json.dumps(jobs, indent=2)
+        except Exception as e:
+            if attempt == 2:
+                return json.dumps({"error": str(e)})
+            await page.wait_for_timeout(2000)
 
 
-def extract_job_details() -> str:
+async def extract_job_details() -> str:
     """Extract detailed job info from the current LinkedIn job page."""
     page = get_page()
     if page is None:
         return json.dumps({"error": "Browser not started"})
 
     try:
-        job = page.evaluate(
+        job = await page.evaluate(
             """
             () => {
-                const title = document.querySelector('h1.job-details-jobs-unified-top-card__job-title') ||
+                const title = document.querySelector('h1.top-card-layout__title') ||
+                              document.querySelector('h1.topcard__title') ||
+                              document.querySelector('h1.job-details-jobs-unified-top-card__job-title') ||
                               document.querySelector('h1.t-24') ||
                               document.querySelector('h1');
 
-                const company = document.querySelector('.job-details-jobs-unified-top-card__company-name a') ||
+                const company = document.querySelector('a.topcard__org-name-link') ||
+                                document.querySelector('span.topcard__flavor:not(.topcard__flavor--bullet)') ||
+                                document.querySelector('.job-details-jobs-unified-top-card__company-name a') ||
                                 document.querySelector('.job-details-jobs-unified-top-card__company-name') ||
                                 document.querySelector('.artdeco-entity-lockup__subtitle a') ||
                                 document.querySelector('.artdeco-entity-lockup__subtitle');
 
-                const location = document.querySelector('.job-details-jobs-unified-top-card__bullet') ||
+                const location = document.querySelector('span.topcard__flavor--bullet') ||
+                                 document.querySelector('.job-details-jobs-unified-top-card__bullet') ||
+                                 document.querySelector('.job-details-jobs-unified-top-card__primary-description') ||
                                  document.querySelector('.artdeco-entity-lockup__caption') ||
-                                 document.querySelector('.job-details-jobs-unified-top-card__primary-description');
+                                 document.querySelector('span.main-job-card__location');
 
                 const descEl = document.querySelector('.jobs-description__content') ||
                                document.querySelector('.description__text') ||
+                               document.querySelector('.show-more-less-html__markup') ||
                                document.querySelector('.jobs-box__html-content');
                 const description = descEl ? descEl.innerText.trim() : '';
 
-                const easyApplyBtn = document.querySelector('button.jobs-apply-button');
-                const easyApplyBadge = document.querySelector('.jobs-apply-button');
+                const easyApplyBtn = document.querySelector('button.jobs-apply-button') ||
+                                     document.querySelector('button.apply-button--easy-apply') ||
+                                     document.querySelector('button[aria-label*="Easy Apply"]') ||
+                                     document.querySelector('button[aria-label*="Solicitud sencilla"]');
 
                 // Detect "already applied" state on the job page
                 const appliedBanner = document.querySelector('.jobs-apply-button--disabled') ||
                                       document.querySelector('.artdeco-inline-feedback--success');
                 const alreadyApplied = !!(appliedBanner) ||
                     (easyApplyBtn && easyApplyBtn.disabled) ||
-                    (easyApplyBtn && easyApplyBtn.innerText.includes('Applied'));
+                    (easyApplyBtn && (easyApplyBtn.innerText.includes('Applied') || easyApplyBtn.innerText.includes('Solicitado')));
 
                 const recruiter = document.querySelector('.jobs-search__organizer-link') ||
                                   document.querySelector('a[data-tracking-control-name="public_jobs_jobs-search-result-1"]');
@@ -414,8 +434,8 @@ def extract_job_details() -> str:
                     company: company ? company.innerText.trim() : '',
                     location: location ? location.innerText.trim().split('\\n')[0] : '',
                     description: description,
-                    easy_apply: !!(easyApplyBtn || easyApplyBadge),
-                    already_applied: alreadyApplied,
+                    easy_apply: !!easyApplyBtn,
+                    already_applied: !!alreadyApplied,
                     recruiter: recruiter ? recruiter.href : '',
                     url: window.location.href,
                 };
@@ -428,7 +448,7 @@ def extract_job_details() -> str:
         return json.dumps({"error": str(e)})
 
 
-def click_easy_apply() -> str:
+async def click_easy_apply() -> str:
     """Click the Easy Apply button with multi-layer selector fallbacks.
 
     Returns 'clicked', 'already_applied', or 'error: ...'.
@@ -437,33 +457,37 @@ def click_easy_apply() -> str:
     if page is None:
         return "error: Browser not started"
 
-    _take_debug_screenshot("easy_apply_before_click")
+    await _take_debug_screenshot("easy_apply_before_click")
 
     try:
-        # Multi-layer selector cascade (inspired by david-izhak)
         selectors = [
             'button.jobs-apply-button',
+            'button.apply-button--easy-apply',
             'button[aria-label*="Easy Apply"]',
-            'button[aria-label*="Apply"]',
+            'button[aria-label*="Solicitud sencilla"]',
             'button.artdeco-button--primary:has-text("Easy Apply")',
+            'button.artdeco-button--primary:has-text("Solicitud sencilla")',
             'button:has-text("Easy Apply")',
+            'button:has-text("Solicitud sencilla")',
+            'button[aria-label*="Apply"]',
+            'button[aria-label*="Solicitar"]',
         ]
 
         for selector in selectors:
             try:
                 btn = page.locator(selector).first
-                if btn.is_visible(timeout=3000):
-                    # Check if already applied (button disabled or text says "Applied")
-                    btn_text = btn.inner_text(timeout=2000).lower()
-                    is_disabled = btn.is_disabled()
+                if await btn.is_visible(timeout=3000):
+                    btn_text = await btn.inner_text(timeout=2000)
+                    btn_text_lower = btn_text.lower()
+                    is_disabled = await btn.is_disabled()
 
-                    if is_disabled or "applied" in btn_text:
+                    if is_disabled or "applied" in btn_text_lower or "solicitado" in btn_text_lower:
                         logger.info("Already applied to this job")
                         return "already_applied"
 
-                    btn.click(timeout=5000)
-                    human_delay()
-                    _take_debug_screenshot("easy_apply_after_click")
+                    await btn.click(timeout=5000)
+                    await human_delay()
+                    await _take_debug_screenshot("easy_apply_after_click")
                     return "clicked"
             except Exception:
                 continue
@@ -473,7 +497,7 @@ def click_easy_apply() -> str:
         return f"error: {e}"
 
 
-def detect_form_fields() -> str:
+async def detect_form_fields() -> str:
     """Detect form fields in the current Easy Apply modal.
 
     Returns JSON with fields, has_submit/has_next, progress percentage, and total_fields.
@@ -482,13 +506,13 @@ def detect_form_fields() -> str:
     if page is None:
         return json.dumps({"error": "Browser not started"})
 
-    progress = _get_progress_percentage()
+    progress = await _get_progress_percentage()
 
     try:
-        fields = page.evaluate(_DETECT_FIELDS_JS)
+        fields = await page.evaluate(_DETECT_FIELDS_JS)
 
         # Add follow checkbox detection
-        follow_result = page.evaluate("""
+        follow_result = await page.evaluate("""
             () => {
                 const modal = document.querySelector('.jobs-easy-apply-modal') ||
                               document.querySelector('[role="dialog"]');
@@ -506,13 +530,13 @@ def detect_form_fields() -> str:
         if progress is not None:
             fields["progress_percent"] = progress
 
-        _take_debug_screenshot("detect_fields")
+        await _take_debug_screenshot("detect_fields")
         return json.dumps(fields, indent=2)
     except Exception as e:
         return json.dumps({"error": str(e)})
 
 
-def detect_fields_with_profile() -> str:
+async def detect_fields_with_profile() -> str:
     """Detect form fields and match them against the user profile.
 
     Same as detect_form_fields but adds 'profile_value' to each field
@@ -525,10 +549,10 @@ def detect_fields_with_profile() -> str:
         return json.dumps({"error": "Browser not started"})
 
     profile = load_profile()
-    progress = _get_progress_percentage()
+    progress = await _get_progress_percentage()
 
     try:
-        raw = page.evaluate(_DETECT_FIELDS_JS)
+        raw = await page.evaluate(_DETECT_FIELDS_JS)
 
         # Match each field against profile
         needs_human = []
@@ -544,13 +568,13 @@ def detect_fields_with_profile() -> str:
         if progress is not None:
             raw["progress_percent"] = progress
 
-        _take_debug_screenshot("detect_fields_with_profile")
+        await _take_debug_screenshot("detect_fields_with_profile")
         return json.dumps(raw, indent=2)
     except Exception as e:
         return json.dumps({"error": str(e)})
 
 
-def unfollow_company() -> str:
+async def unfollow_company() -> str:
     """Uncheck the 'Follow [Company]' checkbox if it's checked.
 
     Returns 'unchecked', 'not_found', or 'error: ...'.
@@ -560,7 +584,7 @@ def unfollow_company() -> str:
         return "error: Browser not started"
 
     try:
-        result = page.evaluate(
+        result = await page.evaluate(
             """
             () => {
                 const modal = document.querySelector('.jobs-easy-apply-modal') ||
@@ -590,13 +614,13 @@ def unfollow_company() -> str:
         )
         if result == "unchecked":
             logger.info("Unfollowed company checkbox")
-            human_delay()
+            await human_delay()
         return result
     except Exception as e:
         return f"error: {e}"
 
 
-def click_next_or_submit() -> str:
+async def click_next_or_submit() -> str:
     """Click Next/Continue/Submit in the Easy Apply wizard.
 
     Checks Submit before Next (proper priority). Returns which button was clicked.
@@ -621,10 +645,10 @@ def click_next_or_submit() -> str:
         for action, selector in selectors:
             try:
                 btn = page.locator(selector).first
-                if btn.is_visible(timeout=2000):
-                    btn.click(timeout=3000)
-                    human_delay()
-                    _take_debug_screenshot(f"after_{action}_click")
+                if await btn.is_visible(timeout=2000):
+                    await btn.click(timeout=3000)
+                    await human_delay()
+                    await _take_debug_screenshot(f"after_{action}_click")
                     return f"clicked_{action}"
             except Exception:
                 continue
@@ -634,7 +658,7 @@ def click_next_or_submit() -> str:
         return f"error: {e}"
 
 
-def submit_application() -> str:
+async def submit_application() -> str:
     """Submit the Easy Apply application.
 
     1. Unfollow company if checkbox is checked
@@ -645,7 +669,7 @@ def submit_application() -> str:
     settings = get_settings()
     if settings.apply.dry_run:
         logger.info("Dry run mode — skipping actual submission")
-        _take_debug_screenshot("dry_run_before_submit")
+        await _take_debug_screenshot("dry_run_before_submit")
         return "dry_run_blocked"
 
     page = get_page()
@@ -654,67 +678,67 @@ def submit_application() -> str:
 
     try:
         # Unfollow company before submitting
-        unfollow_company()
+        await unfollow_company()
 
         btn = page.locator('button[aria-label="Submit application"]').first
-        btn.click(timeout=5000)
-        human_delay()
+        await btn.click(timeout=5000)
+        await human_delay()
 
         # Verify submission succeeded — check modal closed
         try:
             modal = page.locator('.jobs-easy-apply-modal, [role="dialog"], .artdeco-modal').first
-            modal.wait_for(state="hidden", timeout=5000)
+            await modal.wait_for(state="hidden", timeout=5000)
             logger.info("Submit verified: modal closed")
         except Exception:
             # Modal might still be open — check for success message
             success = page.locator('.artdeco-inline-feedback--success, .jobs-succeeded-apply-message').first
-            if success.is_visible(timeout=2000):
+            if await success.is_visible(timeout=2000):
                 logger.info("Submit verified: success message shown")
             else:
                 logger.warning("Submit verification inconclusive — modal state unknown")
 
-        _take_debug_screenshot("after_submit")
-        save_session()
+        await _take_debug_screenshot("after_submit")
+        await save_session()
         return "submitted"
     except Exception as e:
         return f"error: {e}"
 
 
-def get_page_text() -> str:
+async def get_page_text() -> str:
     """Get the visible text content of the current page."""
     page = get_page()
     if page is None:
         return "error: Browser not started"
 
     try:
-        text = page.evaluate("() => document.body.innerText")
+        text = await page.evaluate("() => document.body.innerText")
         return text[:10000]
     except Exception as e:
         return f"error: {e}"
 
 
-def navigate_to_url(url: str) -> str:
+async def navigate_to_url(url: str) -> str:
     """Navigate to a URL and return the page title + URL."""
     page = get_page()
     if page is None:
         return "error: Browser not started. Call browser_launch first."
 
     try:
-        page.goto(url, wait_until="domcontentloaded", timeout=30000)
-        human_delay()
-        return f"Navigated to: {page.url}\nTitle: {page.title()}"
+        await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+        await human_delay()
+        return f"Navigated to: {page.url}\nTitle: {await page.title()}"
     except Exception as e:
         return f"error: {e}"
 
 
-def search_and_navigate(
+async def search_and_navigate(
     positions: str = "",
     locations: str = "",
     easy_apply: bool = True,
 ) -> str:
     """Build a LinkedIn search URL and navigate to it."""
     url = build_search_url(positions, locations, easy_apply)
-    return navigate_to_url(url)
+    return await navigate_to_url(url)
 
 
 def generate_job_id(link: str) -> str:

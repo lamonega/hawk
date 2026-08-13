@@ -6,7 +6,7 @@ import json
 from typing import Any
 
 from loguru import logger
-from playwright.sync_api import Page
+from playwright.async_api import Page
 
 from hawk.browser.driver import get_page
 
@@ -15,7 +15,7 @@ _last_snapshot: dict[str, Any] = {}
 _last_elements: list[dict[str, Any]] = []
 
 
-def snapshot() -> str:
+async def snapshot() -> str:
     """Take a DOM snapshot of the current page.
 
     Extracts interactive elements using JavaScript (works without page.accessibility).
@@ -31,7 +31,7 @@ def snapshot() -> str:
 
     try:
         # Extract interactive elements via JS
-        raw_elements = page.evaluate(
+        raw_elements = await page.evaluate(
             """
             () => {
                 const selectors = [
@@ -113,7 +113,7 @@ def snapshot() -> str:
 
         result = {
             "url": page.url,
-            "title": page.title(),
+            "title": await page.title(),
             "elements": elements,
         }
 
@@ -137,7 +137,7 @@ def get_element_by_index(index: int) -> dict | None:
     return _last_elements[index]
 
 
-def _find_locator_for_element(page: Page, element: dict) -> Any | None:
+async def _find_locator_for_element(page: Page, element: dict) -> Any | None:
     """Find a Playwright locator for an element from snapshot data."""
     name = element.get("name", "")
     tag = element.get("tag", "")
@@ -165,7 +165,7 @@ def _find_locator_for_element(page: Page, element: dict) -> Any | None:
     # Try role + name selector
     try:
         locator = page.get_by_role(role, name=name, exact=False)
-        if locator.count() > 0:
+        if await locator.count() > 0:
             return locator.first
     except Exception:
         pass
@@ -173,7 +173,7 @@ def _find_locator_for_element(page: Page, element: dict) -> Any | None:
     # Fallback: try text content
     try:
         locator = page.get_by_text(name, exact=False)
-        if locator.count() > 0:
+        if await locator.count() > 0:
             return locator.first
     except Exception:
         pass
@@ -181,7 +181,7 @@ def _find_locator_for_element(page: Page, element: dict) -> Any | None:
     # Fallback: try label
     try:
         locator = page.get_by_label(name, exact=False)
-        if locator.count() > 0:
+        if await locator.count() > 0:
             return locator.first
     except Exception:
         pass
@@ -189,7 +189,7 @@ def _find_locator_for_element(page: Page, element: dict) -> Any | None:
     return None
 
 
-def click_element(element_index: int) -> str:
+async def click_element(element_index: int) -> str:
     """Click an element by its index from the last snapshot."""
     page = get_page()
     if page is None:
@@ -199,18 +199,18 @@ def click_element(element_index: int) -> str:
     if element is None:
         return f"error: Element index {element_index} not found in last snapshot"
 
-    locator = _find_locator_for_element(page, element)
+    locator = await _find_locator_for_element(page, element)
     if locator is None:
         return f"error: Could not find locator for element '{element.get('name', '')}'"
 
     try:
-        locator.click(timeout=5000)
+        await locator.click(timeout=5000)
         return f"Clicked: {element.get('role', '')} '{element.get('name', '')}'"
     except Exception as e:
         return f"error clicking: {e}"
 
 
-def type_element(element_index: int, text: str, clear: bool = False) -> str:
+async def type_element(element_index: int, text: str, clear: bool = False) -> str:
     """Type text into an element by its index."""
     page = get_page()
     if page is None:
@@ -220,20 +220,20 @@ def type_element(element_index: int, text: str, clear: bool = False) -> str:
     if element is None:
         return f"error: Element index {element_index} not found in last snapshot"
 
-    locator = _find_locator_for_element(page, element)
+    locator = await _find_locator_for_element(page, element)
     if locator is None:
         return f"error: Could not find locator for element '{element.get('name', '')}'"
 
     try:
         if clear:
-            locator.fill("")
-        locator.type(text, delay=50)  # Human-like typing speed
+            await locator.fill("")
+        await locator.type(text, delay=50)  # Human-like typing speed
         return f"Typed '{text[:50]}...' into: {element.get('role', '')} '{element.get('name', '')}'"
     except Exception as e:
         return f"error typing: {e}"
 
 
-def select_element(element_index: int, value: str) -> str:
+async def select_element(element_index: int, value: str) -> str:
     """Select an option from a dropdown/select element."""
     page = get_page()
     if page is None:
@@ -243,18 +243,18 @@ def select_element(element_index: int, value: str) -> str:
     if element is None:
         return f"error: Element index {element_index} not found in last snapshot"
 
-    locator = _find_locator_for_element(page, element)
+    locator = await _find_locator_for_element(page, element)
     if locator is None:
         return f"error: Could not find locator for element '{element.get('name', '')}'"
 
     try:
-        locator.select_option(value=value, timeout=5000)
+        await locator.select_option(value=value, timeout=5000)
         return f"Selected '{value}' in: {element.get('role', '')} '{element.get('name', '')}'"
     except Exception as e:
         return f"error selecting: {e}"
 
 
-def upload_file(element_index: int, file_path: str) -> str:
+async def upload_file(element_index: int, file_path: str) -> str:
     """Upload a file to a file input element."""
     page = get_page()
     if page is None:
@@ -267,13 +267,13 @@ def upload_file(element_index: int, file_path: str) -> str:
     # For file inputs, we need to find the input[type=file] directly
     try:
         locator = page.locator("input[type=file]").first
-        locator.set_input_files(file_path, timeout=5000)
+        await locator.set_input_files(file_path, timeout=5000)
         return f"Uploaded '{file_path}' to file input"
     except Exception as e:
         return f"error uploading: {e}"
 
 
-def take_screenshot() -> str:
+async def take_screenshot() -> str:
     """Take a screenshot of the current page and return base64 PNG."""
     import base64
 
@@ -282,7 +282,7 @@ def take_screenshot() -> str:
         return "error: Browser not started"
 
     try:
-        screenshot = page.screenshot(type="png")
+        screenshot = await page.screenshot(type="png")
         return base64.b64encode(screenshot).decode("utf-8")
     except Exception as e:
         return f"error: {e}"

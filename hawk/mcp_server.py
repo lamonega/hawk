@@ -21,7 +21,7 @@ server = MCPServer(
 
 
 @server.tool()
-def browser_launch(headless: bool = False) -> str:
+async def browser_launch(headless: bool = False) -> str:
     """Launch the browser with a persistent LinkedIn profile.
 
     The browser uses a persistent profile directory so your login session is preserved
@@ -36,7 +36,7 @@ def browser_launch(headless: bool = False) -> str:
     from hawk.browser.driver import launch
 
     try:
-        page = launch(headless=headless)
+        page = await launch(headless=headless)
         return f"Browser launched. Current URL: {page.url}"
     except Exception as e:
         logger.error("browser_launch failed: {}", e)
@@ -44,7 +44,7 @@ def browser_launch(headless: bool = False) -> str:
 
 
 @server.tool()
-def browser_check_session() -> str:
+async def browser_check_session() -> str:
     """Check if the browser has an active LinkedIn session.
 
     Returns:
@@ -52,11 +52,11 @@ def browser_check_session() -> str:
     """
     from hawk.browser.driver import check_linkedin_session
 
-    return check_linkedin_session()
+    return await check_linkedin_session()
 
 
 @server.tool()
-def browser_navigate(url: str) -> str:
+async def browser_navigate(url: str) -> str:
     """Navigate the browser to a URL.
 
     Args:
@@ -72,15 +72,15 @@ def browser_navigate(url: str) -> str:
         return "error: Browser not started. Call browser_launch first."
 
     try:
-        page.goto(url, wait_until="domcontentloaded", timeout=30000)
-        return f"Navigated to: {page.url}\nTitle: {page.title()}"
+        await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+        return f"Navigated to: {page.url}\nTitle: {await page.title()}"
     except Exception as e:
         logger.error("browser_navigate failed: {}", e)
         return f"error: {e}"
 
 
 @server.tool()
-def browser_snapshot() -> str:
+async def browser_snapshot() -> str:
     """Take an accessibility tree snapshot of the current page.
 
     Returns a JSON with indexed interactive elements (role, name, value).
@@ -91,11 +91,11 @@ def browser_snapshot() -> str:
     """
     from hawk.browser.dom import snapshot
 
-    return snapshot()
+    return await snapshot()
 
 
 @server.tool()
-def browser_click(element_index: int) -> str:
+async def browser_click(element_index: int) -> str:
     """Click an element by its index from the last snapshot.
 
     Args:
@@ -106,11 +106,11 @@ def browser_click(element_index: int) -> str:
     """
     from hawk.browser.dom import click_element
 
-    return click_element(element_index)
+    return await click_element(element_index)
 
 
 @server.tool()
-def browser_type(element_index: int, text: str, clear: bool = False) -> str:
+async def browser_type(element_index: int, text: str, clear: bool = False) -> str:
     """Type text into an element by its index.
 
     Args:
@@ -123,11 +123,11 @@ def browser_type(element_index: int, text: str, clear: bool = False) -> str:
     """
     from hawk.browser.dom import type_element
 
-    return type_element(element_index, text, clear)
+    return await type_element(element_index, text, clear)
 
 
 @server.tool()
-def browser_select(element_index: int, value: str) -> str:
+async def browser_select(element_index: int, value: str) -> str:
     """Select an option from a dropdown/select element.
 
     Args:
@@ -139,11 +139,11 @@ def browser_select(element_index: int, value: str) -> str:
     """
     from hawk.browser.dom import select_element
 
-    return select_element(element_index, value)
+    return await select_element(element_index, value)
 
 
 @server.tool()
-def browser_upload_file(element_index: int, file_path: str) -> str:
+async def browser_upload_file(element_index: int, file_path: str) -> str:
     """Upload a file to a file input element.
 
     Args:
@@ -155,11 +155,11 @@ def browser_upload_file(element_index: int, file_path: str) -> str:
     """
     from hawk.browser.dom import upload_file
 
-    return upload_file(element_index, file_path)
+    return await upload_file(element_index, file_path)
 
 
 @server.tool()
-def browser_screenshot() -> str:
+async def browser_screenshot() -> str:
     """Take a screenshot of the current page.
 
     Returns:
@@ -167,11 +167,11 @@ def browser_screenshot() -> str:
     """
     from hawk.browser.dom import take_screenshot
 
-    return take_screenshot()
+    return await take_screenshot()
 
 
 @server.tool()
-def browser_print_pdf(output_path: str) -> str:
+async def browser_print_pdf(output_path: str) -> str:
     """Convert the current page to PDF.
 
     Args:
@@ -182,11 +182,11 @@ def browser_print_pdf(output_path: str) -> str:
     """
     from hawk.browser.pdf import print_to_pdf
 
-    return print_to_pdf(output_path)
+    return await print_to_pdf(output_path)
 
 
 @server.tool()
-def browser_close() -> str:
+async def browser_close() -> str:
     """Close the browser and save session.
 
     Returns:
@@ -195,8 +195,8 @@ def browser_close() -> str:
     from hawk.browser.driver import close, save_session
 
     try:
-        save_session()
-        close()
+        await save_session()
+        await close()
         return "Browser closed. Session saved."
     except Exception as e:
         return f"error: {e}"
@@ -206,7 +206,7 @@ def browser_close() -> str:
 
 
 @server.tool()
-def linkedin_search(
+async def linkedin_search(
     positions: str = "",
     locations: str = "",
     easy_apply: bool = True,
@@ -225,11 +225,11 @@ def linkedin_search(
     """
     from hawk.linkedin.operations import search_and_navigate
 
-    return search_and_navigate(positions, locations, easy_apply)
+    return await search_and_navigate(positions, locations, easy_apply)
 
 
 @server.tool()
-def linkedin_extract_job() -> str:
+async def linkedin_extract_job() -> str:
     """Extract job details from the current LinkedIn job page.
 
     Returns:
@@ -237,11 +237,11 @@ def linkedin_extract_job() -> str:
     """
     from hawk.linkedin.operations import extract_job_details
 
-    return extract_job_details()
+    return await extract_job_details()
 
 
 @server.tool()
-def linkedin_extract_jobs_list() -> str:
+async def linkedin_extract_jobs_list() -> str:
     """Extract a list of jobs from a LinkedIn search results page.
 
     Returns:
@@ -249,11 +249,11 @@ def linkedin_extract_jobs_list() -> str:
     """
     from hawk.linkedin.operations import extract_jobs_list
 
-    return extract_jobs_list()
+    return await extract_jobs_list()
 
 
 @server.tool()
-def linkedin_click_easy_apply() -> str:
+async def linkedin_click_easy_apply() -> str:
     """Click the Easy Apply button on the current job page.
 
     Returns:
@@ -261,11 +261,11 @@ def linkedin_click_easy_apply() -> str:
     """
     from hawk.linkedin.operations import click_easy_apply
 
-    return click_easy_apply()
+    return await click_easy_apply()
 
 
 @server.tool()
-def linkedin_detect_fields() -> str:
+async def linkedin_detect_fields() -> str:
     """Detect form fields in the current Easy Apply modal.
 
     Returns JSON with fields array (type, name, required, options) and has_submit/has_next flags.
@@ -273,11 +273,11 @@ def linkedin_detect_fields() -> str:
     """
     from hawk.linkedin.operations import detect_form_fields
 
-    return detect_form_fields()
+    return await detect_form_fields()
 
 
 @server.tool()
-def linkedin_next_step() -> str:
+async def linkedin_next_step() -> str:
     """Click Next/Continue/Submit in the Easy Apply wizard.
 
     Returns:
@@ -285,11 +285,11 @@ def linkedin_next_step() -> str:
     """
     from hawk.linkedin.operations import click_next_or_submit
 
-    return click_next_or_submit()
+    return await click_next_or_submit()
 
 
 @server.tool()
-def linkedin_submit() -> str:
+async def linkedin_submit() -> str:
     """Submit the Easy Apply application.
 
     Automatically unchecks 'Follow Company' before submitting.
@@ -300,11 +300,11 @@ def linkedin_submit() -> str:
     """
     from hawk.linkedin.operations import submit_application
 
-    return submit_application()
+    return await submit_application()
 
 
 @server.tool()
-def linkedin_unfollow_company() -> str:
+async def linkedin_unfollow_company() -> str:
     """Uncheck the 'Follow [Company]' checkbox in the Easy Apply modal.
 
     Returns:
@@ -312,11 +312,11 @@ def linkedin_unfollow_company() -> str:
     """
     from hawk.linkedin.operations import unfollow_company
 
-    return unfollow_company()
+    return await unfollow_company()
 
 
 @server.tool()
-def linkedin_get_page_text() -> str:
+async def linkedin_get_page_text() -> str:
     """Get the visible text content of the current page.
 
     Useful for reading job descriptions, form labels, or any page content.
@@ -324,7 +324,7 @@ def linkedin_get_page_text() -> str:
     """
     from hawk.linkedin.operations import get_page_text
 
-    return get_page_text()
+    return await get_page_text()
 
 
 @server.tool()

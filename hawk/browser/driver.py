@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from loguru import logger
-from playwright.sync_api import Browser, BrowserContext, Page, sync_playwright
+from playwright.async_api import Browser, BrowserContext, Page, async_playwright
 from playwright_stealth import Stealth
 
 from hawk.settings import get_settings
@@ -169,27 +169,27 @@ def get_state_path() -> Path:
     return get_profile_dir() / _STATE_FILE
 
 
-def _close_existing() -> None:
+async def _close_existing() -> None:
     """Close any existing browser resources to prevent process leaks."""
     global _browser, _context, _page, _pw
     try:
         if _page and not _page.is_closed():
-            _page.close()
+            await _page.close()
     except Exception:
         pass
     try:
         if _context:
-            _context.close()
+            await _context.close()
     except Exception:
         pass
     try:
         if _browser:
-            _browser.close()
+            await _browser.close()
     except Exception:
         pass
     try:
         if _pw:
-            _pw.stop()
+            await _pw.stop()
     except Exception:
         pass
     _page = None
@@ -198,14 +198,14 @@ def _close_existing() -> None:
     _pw = None
 
 
-def launch(headless: bool = False) -> Page:
+async def launch(headless: bool = False) -> Page:
     """Launch browser with stealth and persistent profile."""
     global _browser, _context, _page, _pw
 
     # Close existing browser to prevent process leak
     if _browser is not None or _pw is not None:
         logger.warning("Closing existing browser before re-launch")
-        _close_existing()
+        await _close_existing()
 
     settings = get_settings()
     headless = headless or settings.browser.headless
@@ -217,9 +217,9 @@ def launch(headless: bool = False) -> Page:
         "height": random.choice([1080, 1080, 1080, 768, 864]),
     }
 
-    _pw = Stealth().use_sync(sync_playwright()).start()
+    _pw = await Stealth().use_async(async_playwright()).start()
 
-    _browser = _pw.chromium.launch(
+    _browser = await _pw.chromium.launch(
         headless=headless,
         args=[
             "--disable-blink-features=AutomationControlled",
@@ -249,11 +249,11 @@ def launch(headless: bool = False) -> Page:
         context_kwargs["storage_state"] = str(state_path)
         logger.info("Loading saved session from {}", state_path)
 
-    _context = _browser.new_context(**context_kwargs)
-    _page = _context.new_page()
+    _context = await _browser.new_context(**context_kwargs)
+    _page = await _context.new_page()
 
     # Apply fingerprint spoofing BEFORE any navigation
-    _page.add_init_script(_FINGERPRINT_SPOOFING_JS)
+    await _page.add_init_script(_FINGERPRINT_SPOOFING_JS)
 
     logger.info("Browser launched with stealth (headless={}, ua={}, viewport={}x{})",
                 headless, ua[:50], viewport["width"], viewport["height"])
@@ -265,15 +265,15 @@ def get_page() -> Page | None:
     return _page if (_page and not _page.is_closed()) else None
 
 
-def save_session() -> None:
+async def save_session() -> None:
     """Save browser storage state (cookies, localStorage) for session reuse."""
     if _context:
         state_path = get_state_path()
-        _context.storage_state(path=str(state_path))
+        await _context.storage_state(path=str(state_path))
         logger.info("Session saved to {}", state_path)
 
 
-def check_linkedin_session() -> str:
+async def check_linkedin_session() -> str:
     """Check if the browser has an active LinkedIn session.
 
     Returns:
@@ -284,7 +284,7 @@ def check_linkedin_session() -> str:
         return "not_started"
 
     try:
-        page.goto("https://www.linkedin.com/feed/", wait_until="domcontentloaded", timeout=15000)
+        await page.goto("https://www.linkedin.com/feed/", wait_until="domcontentloaded", timeout=15000)
         url = page.url
 
         if "login" in url or "authwall" in url:
@@ -295,13 +295,13 @@ def check_linkedin_session() -> str:
             logger.warning("LinkedIn checkpoint/challenge detected at: {}", url)
             return "not_logged_in"
 
-        feed = page.query_selector(".feed-identity-module")
+        feed = await page.query_selector(".feed-identity-module")
         if feed:
-            save_session()
+            await save_session()
             return "logged_in"
 
         if "/feed" in url:
-            save_session()
+            await save_session()
             return "logged_in"
 
         return "not_logged_in"
@@ -313,7 +313,7 @@ def check_linkedin_session() -> str:
         return f"error: {e}"
 
 
-def close() -> None:
+async def close() -> None:
     """Close the browser and clean up."""
-    _close_existing()
+    await _close_existing()
     logger.info("Browser closed")
