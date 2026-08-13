@@ -1,29 +1,26 @@
 # hawk
 
-AI-powered LinkedIn Easy Apply job applier via MCP.
+MCP LinkedIn Easy Apply job applier — an AI agent's toolbox.
 
-## What it does
+hawk provides MCP tools for searching LinkedIn Easy Apply jobs, extracting details,
+screening them, generating tailored resumes, and filling Easy Apply forms. The agent
+(opencode, agy, Claude Code, etc.) is the brain; hawk is the hands.
 
-hawk automates LinkedIn Easy Apply job applications using:
-- **MCP tools** exposed to an AI agent (opencode, agy, Claude Code, etc.)
-- **Persistent browser profile** with manual LinkedIn login (no automated login)
-- **LLM screening** to only apply to relevant jobs
-- **Tailored resumes and cover letters** per job
-- **Human-in-the-loop** for unknown fields and CAPTCHAs
-- **Daily rate limits** and dry-run mode for safety
-
-## Quick start
+## Install
 
 ```bash
+git clone https://github.com/youruser/hawk.git
 cd hawk
 pip install -e .
-hawk doctor          # verify configuration
-hawk mcp             # start MCP server for your agent
+playwright install chromium
+hawk doctor
 ```
+
+`hawk doctor` verifies config, browser profile directory, and Playwright.
 
 ## MCP wiring
 
-Add to your agent config (e.g., `opencode.json`):
+Add to your agent's MCP config (e.g., `opencode.json`):
 
 ```json
 {
@@ -37,13 +34,41 @@ Add to your agent config (e.g., `opencode.json`):
 }
 ```
 
-Then ask your agent: "Postulate to Easy Apply backend jobs in Berlin"
+## First run
+
+1. Launch browser: `browser_launch(headless=false)`
+2. Log in to LinkedIn **manually** in the browser window
+3. Tell the agent: "Check my session" → `browser_check_session()`
+4. The agent checks your profile → asks you to fill it (or imports from a file)
+5. Start applying: "Postulate to backend jobs in Berlin"
 
 ## Configuration
 
-- `config/settings.yaml` — job search filters, scoring threshold, daily caps
-- `config/secrets.yaml` — LLM API keys (gitignored)
-- `config/plain_text_resume.yaml` — your resume in structured YAML
+| File | Purpose |
+|------|---------|
+| `config/settings.yaml` | Search filters, scoring threshold, daily caps, dry_run |
+| `config/profile.yaml` | Your personal info (auto-fills LinkedIn forms) |
+| `config/plain_text_resume.yaml` | Your resume in structured YAML |
+
+## How it works
+
+- **Persistent browser profile** — login once, hawk reuses the session
+- **Agent-driven** — the LLM decides what to apply to, hawk provides tools
+- **Human-in-the-loop** — CAPTCHAs and unknown fields ask you
+- **Daily rate limits** — configurable cap (default 5/day)
+- **Dry-run mode** — test without actually submitting (default: on)
+
+## Available tools (35)
+
+**Browser** — launch, session check, navigate, snapshot, click, type, select, upload, screenshot, PDF, close
+
+**LinkedIn** — search, extract job list, extract job details, Easy Apply wizard (click, detect fields, next step, submit), unfollow company, page text
+
+**Storage** — save jobs, record applications, daily count, check history
+
+**Profile** — read/update profile, check completeness, learn Q&A pairs, import from file, list fields
+
+**Utility** — read resume template, read settings, ask human
 
 ## ⚠️ Disclaimer
 
