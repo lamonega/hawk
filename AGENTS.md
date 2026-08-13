@@ -17,6 +17,7 @@ via the MCP protocol.
 ```bash
 cd hawk
 pip install -e .
+playwright install chromium
 hawk doctor    # verify config and browser profile
 ```
 
@@ -58,6 +59,7 @@ Follow this pipeline when asked to apply to jobs:
 ### 2. Discover
 
 1. Build search URL: call `linkedin_search(positions=..., locations=..., easy_apply=true)`.
+   - Search filters (experience levels, job types, date range, distance) are automatically applied from `config/settings.yaml`.
 2. Extract jobs: call `linkedin_extract_jobs_list()`.
 3. For each job: check `get_application_history(job_id)` — skip if already applied.
 
@@ -109,6 +111,23 @@ Always ask the human before:
 - If anything looks wrong (LinkedIn shows a warning, account restriction message, etc.):
   **stop immediately** and alert the human.
 
+## Stealth & Anti-Detection
+
+hawk uses multiple layers of anti-detection:
+
+| Layer | What it does |
+|-------|--------------|
+| **playwright-stealth v2** | Patches navigator.webdriver, chrome.runtime, plugins, permissions |
+| **Canvas noise** | Subtle per-pixel noise (max +-1, 2% of pixels) on getImageData/toDataURL |
+| **WebGL spoof** | Vendor: "Google Inc. (Intel)", Renderer: "ANGLE (Intel, UHD 630)" |
+| **AudioContext** | Tiny perturbation on createOscillator.frequency |
+| **Realistic UA** | Chrome 129-131 on Windows/Mac, rotated per session |
+| **Realistic viewport** | 1920x1080 / 1366x768 / 1536x864 — real resolutions |
+| **Locale + Timezone** | en-US, America/New_York |
+| **Real plugins** | Chrome PDF Plugin, Chrome PDF Viewer, Native Client |
+| **Persistent profile** | Cookies and storage persist between sessions |
+| **Anti-detection args** | --disable-blink-features=AutomationControlled |
+
 ## File Locations
 
 - Config: `config/settings.yaml`
@@ -117,6 +136,7 @@ Always ask the human before:
 - Output (PDFs, JSON): `output/`
 - Database: `output/hawk.db`
 - Resume: `config/plain_text_resume.yaml`
+- Screenshots: `output/screenshots/`
 
 ## Project Structure
 
@@ -125,14 +145,15 @@ hawk/
 ├── hawk/
 │   ├── __init__.py              # version
 │   ├── cli.py                   # CLI: hawk doctor|mcp|run
-│   ├── mcp_server.py            # MCP server with 33 tools
-│   ├── settings.py              # Pydantic settings (LinkedIn, Scoring, Apply, Browser)
+│   ├── mcp_server.py            # MCP server with 35 tools
+│   ├── settings.py              # Pydantic settings (auto-reloads on file change)
 │   ├── profile.py               # User profile: load/save, field matching, completeness check
+│   ├── file_reader.py           # File import (PDF/TXT/MD/YAML/JSON) with size limits
 │   ├── browser/
 │   │   ├── __init__.py
-│   │   ├── driver.py            # Playwright CDP launch, persistent profile, session check
+│   │   ├── driver.py            # Playwright + stealth launch, persistent profile, session check
 │   │   ├── dom.py               # DOM snapshot, click/type/select/upload via element index
-│   │   └── pdf.py               # printToPDF via CDP
+│   │   └── pdf.py               # printToPDF with headless fallback for headed mode
 │   ├── linkedin/
 │   │   ├── __init__.py
 │   │   └── operations.py        # LinkedIn search, extract, Easy Apply wizard, form detection
@@ -145,7 +166,7 @@ hawk/
 │   ├── settings.yaml            # Runtime configuration
 │   ├── profile.yaml             # User profile (auto-fills LinkedIn forms)
 │   └── plain_text_resume.yaml   # Resume template
-├── output/                      # PDFs, DB, job data
+├── output/                      # PDFs, DB, job data, screenshots
 ├── profiles/linkedin/           # Browser persistent profile
 ├── AGENTS.md                    # This file
 ├── opencode.json                # MCP wiring for opencode
@@ -167,7 +188,7 @@ hawk/
 | `browser_select` | Select dropdown option |
 | `browser_upload_file` | Upload file to input |
 | `browser_screenshot` | Capture page screenshot |
-| `browser_print_pdf` | Convert page to PDF |
+| `browser_print_pdf` | Convert page to PDF (auto headless fallback) |
 | `browser_close` | Close browser and save session |
 
 ### LinkedIn (10)
@@ -179,7 +200,7 @@ hawk/
 | `linkedin_click_easy_apply` | Click Easy Apply button (detects already-applied) |
 | `linkedin_detect_fields` | Detect form fields + progress % in Easy Apply modal |
 | `linkedin_next_step` | Click Next/Continue/Submit in wizard |
-| `linkedin_submit` | Submit application (unfollows company, respects dry_run) |
+| `linkedin_submit` | Submit application (unfollows company, verifies modal closed) |
 | `linkedin_unfollow_company` | Uncheck "Follow Company" checkbox |
 | `linkedin_get_page_text` | Get visible page text |
 | `linkedin_build_search_url` | Build search URL (no navigation) |
@@ -188,7 +209,7 @@ hawk/
 | Tool | Description |
 |------|-------------|
 | `store_job` | Save job to database |
-| `store_application` | Record application (enforces daily cap) |
+| `store_application` | Record application (enforces daily cap, deduplicates) |
 | `get_daily_count` | Get today's application count |
 | `get_application_history` | Check if already applied |
 
@@ -199,9 +220,9 @@ hawk/
 | `hawk_read_profile` | Read user profile |
 | `hawk_check_profile` | Check profile completeness + missing fields |
 | `hawk_mark_profile_complete` | Set completed_at timestamp |
-| `hawk_update_profile` | Update a profile field |
+| `hawk_update_profile` | Update a profile field (with Pydantic validation) |
 | `hawk_learn_answer` | Save a Q&A pair for future form questions |
 | `hawk_import_file` | Read a user-provided file (PDF/TXT/MD/YAML/JSON) for profile import |
 | `hawk_list_profile_fields` | List all profile fields with current values |
-| `hawk_read_settings` | Read current settings |
+| `hawk_read_settings` | Read current settings (auto-reloads on file change) |
 | `ask_human` | Signal need for human input |
