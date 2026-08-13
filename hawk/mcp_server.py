@@ -89,9 +89,9 @@ async def browser_snapshot() -> str:
     Returns:
         JSON string with page URL, title, and indexed interactive elements.
     """
-    import importlib
+    import sys
+    sys.modules.pop("hawk.browser.dom", None)
     import hawk.browser.dom
-    importlib.reload(hawk.browser.dom)
 
     return await hawk.browser.dom.snapshot()
 
@@ -106,9 +106,9 @@ async def browser_click(element_index: int) -> str:
     Returns:
         Result of the click action.
     """
-    import importlib
+    import sys
+    sys.modules.pop("hawk.browser.dom", None)
     import hawk.browser.dom
-    importlib.reload(hawk.browser.dom)
 
     return await hawk.browser.dom.click_element(element_index)
 
@@ -125,9 +125,9 @@ async def browser_type(element_index: int, text: str, clear: bool = False) -> st
     Returns:
         Result of the type action.
     """
-    import importlib
+    import sys
+    sys.modules.pop("hawk.browser.dom", None)
     import hawk.browser.dom
-    importlib.reload(hawk.browser.dom)
 
     return await hawk.browser.dom.type_element(element_index, text, clear)
 
@@ -143,9 +143,9 @@ async def browser_select(element_index: int, value: str) -> str:
     Returns:
         Result of the select action.
     """
-    import importlib
+    import sys
+    sys.modules.pop("hawk.browser.dom", None)
     import hawk.browser.dom
-    importlib.reload(hawk.browser.dom)
 
     return await hawk.browser.dom.select_element(element_index, value)
 
@@ -161,9 +161,9 @@ async def browser_upload_file(element_index: int, file_path: str) -> str:
     Returns:
         Result of the upload.
     """
-    import importlib
+    import sys
+    sys.modules.pop("hawk.browser.dom", None)
     import hawk.browser.dom
-    importlib.reload(hawk.browser.dom)
 
     return await hawk.browser.dom.upload_file(element_index, file_path)
 

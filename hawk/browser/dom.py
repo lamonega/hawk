@@ -19,15 +19,6 @@ if not hasattr(driver_state, "_last_elements"):
 
 
 async def snapshot() -> str:
-    """Take a DOM snapshot of the current page.
-
-    Extracts interactive elements using JavaScript (works without page.accessibility).
-
-    Returns a JSON string with:
-    - url: current page URL
-    - title: page title
-    - elements: indexed list of interactive elements with their properties
-async def snapshot() -> str:
     """Take an accessibility tree snapshot of the current page.
 
     Assigns a unique 'data-hawk-id' attribute to every interactive element in the DOM
@@ -265,6 +256,40 @@ async def select_element(element_index: int, value: str) -> str:
         return "error: Browser not started"
 
     element = get_element_by_index(element_index)
+
+    # Strategy 0: Direct search across all modal selects
+    try:
+        selected_text = await page.evaluate("""
+            (targetVal) => {
+                const modal = document.querySelector('.jobs-easy-apply-modal') ||
+                              document.querySelector('[role="dialog"]') ||
+                              document.querySelector('.artdeco-modal') ||
+                              document.body;
+                const selects = Array.from(modal.querySelectorAll('select'));
+                for (const sel of selects) {
+                    for (let i = 0; i < sel.options.length; i++) {
+                        const opt = sel.options[i];
+                        const valLower = targetVal.toLowerCase().trim();
+                        if ((opt.text || '').toLowerCase().trim().includes(valLower) || 
+                            (opt.value || '').toLowerCase().trim() === valLower) {
+                            sel.selectedIndex = i;
+                            opt.selected = true;
+                            sel.value = opt.value;
+                            sel.dispatchEvent(new Event('input', { bubbles: true }));
+                            sel.dispatchEvent(new Event('change', { bubbles: true }));
+                            sel.dispatchEvent(new Event('blur', { bubbles: true }));
+                            return opt.text.trim();
+                        }
+                    }
+                }
+                return null;
+            }
+        """, value)
+        if selected_text:
+            return f"Selected: '{selected_text}'"
+    except Exception:
+        pass
+
     if element is None:
         return f"error: Element index {element_index} not found in last snapshot"
 
