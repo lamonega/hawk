@@ -333,14 +333,15 @@ async def linkedin_auto_fill_step() -> str:
 
 
 @server.tool()
-async def linkedin_auto_apply(max_steps: int = 8) -> str:
+async def linkedin_auto_apply(max_steps: int = 8, dry_run: bool | None = None) -> str:
     """Execute the entire Easy Apply wizard automatically until review/submit.
 
     Auto-fills all screens (contact info, experience, legal, resume selection)
-    and stops before final submission if apply.dry_run=true.
+    and stops before final submission if dry_run=true (or apply.dry_run=true in settings).
 
     Args:
         max_steps: Maximum wizard steps to attempt (default 8).
+        dry_run: Optional override for dry_run mode (True = stop before submit, False = submit).
 
     Returns:
         JSON summary of the application flow and filled fields.
@@ -349,7 +350,7 @@ async def linkedin_auto_apply(max_steps: int = 8) -> str:
     import hawk.linkedin.autofill
     importlib.reload(hawk.linkedin.autofill)
 
-    result = await hawk.linkedin.autofill.auto_apply_full_flow(max_steps=max_steps)
+    result = await hawk.linkedin.autofill.auto_apply_full_flow(max_steps=max_steps, override_dry_run=dry_run)
     return json.dumps(result, indent=2)
 
 
@@ -382,11 +383,14 @@ async def linkedin_next_step() -> str:
 
 
 @server.tool()
-async def linkedin_submit() -> str:
+async def linkedin_submit(dry_run: bool | None = None) -> str:
     """Submit the Easy Apply application.
 
     Automatically unchecks 'Follow Company' before submitting.
-    Respects dry_run setting — if dry_run=true, does NOT click Submit.
+    Respects dry_run setting — if dry_run=true (or apply.dry_run=true in settings), does NOT click Submit.
+
+    Args:
+        dry_run: Optional override (False to force live submission, True to block).
 
     Returns:
         'submitted', 'dry_run_blocked', or error.
@@ -395,7 +399,7 @@ async def linkedin_submit() -> str:
     import hawk.linkedin.operations
     importlib.reload(hawk.linkedin.operations)
 
-    return await hawk.linkedin.operations.submit_application()
+    return await hawk.linkedin.operations.submit_application(override_dry_run=dry_run)
 
 
 @server.tool()

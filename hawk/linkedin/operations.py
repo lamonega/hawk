@@ -152,7 +152,17 @@ _DETECT_FIELDS_JS = r"""
     root.querySelectorAll('select').forEach(el => {
         fieldIndex++;
         const label = getCleanLabel(el, fieldIndex);
-        const options = Array.from(el.options).map(o => ({value: o.value, text: o.text.trim()}));
+        const allOpts = Array.from(el.options).map(o => ({value: o.value, text: o.text.trim()}));
+        const totalCount = allOpts.length;
+        let options = allOpts;
+        if (totalCount > 20) {
+            const selectedOpt = el.selectedIndex >= 0 ? allOpts[el.selectedIndex] : null;
+            const preview = allOpts.slice(0, 5);
+            if (selectedOpt && !preview.some(p => p.value === selectedOpt.value)) {
+                preview.unshift(selectedOpt);
+            }
+            options = preview;
+        }
         results.push({
             type: 'select',
             name: label,
@@ -160,6 +170,7 @@ _DETECT_FIELDS_JS = r"""
             value: el.value || '',
             selected_text: el.selectedIndex >= 0 && el.options[el.selectedIndex] ? el.options[el.selectedIndex].text.trim() : '',
             options: options,
+            total_options: totalCount,
             id: el.id || '',
         });
     });
@@ -1231,7 +1242,7 @@ async def click_next_or_submit() -> str:
         return f"error: {e}"
 
 
-async def submit_application() -> str:
+async def submit_application(override_dry_run: bool | None = None) -> str:
     """Submit the Easy Apply application.
 
     1. Unfollow company if checkbox is checked
@@ -1240,7 +1251,8 @@ async def submit_application() -> str:
     4. Verify submission by checking modal closed or confirmation message
     """
     settings = get_settings()
-    if settings.apply.dry_run:
+    is_dry = override_dry_run if override_dry_run is not None else settings.apply.dry_run
+    if is_dry:
         logger.info("Dry run mode — skipping actual submission")
         await _take_debug_screenshot("dry_run_before_submit")
         return "dry_run_blocked"

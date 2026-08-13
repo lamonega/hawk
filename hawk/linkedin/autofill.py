@@ -167,8 +167,30 @@ _AUTOFILL_EVALUATE_JS = r"""
             setInputValue(input, expYears);
             filled.push({ field: 'experience_years', value: expYears, label: rawLabel });
         } else if (label.includes('salario') || label.includes('salary') || label.includes('remuneración') || label.includes('remuneracion') || label.includes('pretendida') || label.includes('compensation') || label.includes('sueldo')) {
-            setInputValue(input, salaryVal);
-            filled.push({ field: 'salary', value: salaryVal, label: rawLabel });
+            const isArs = label.includes('pesos') || label.includes('ars') || label.includes('argentino') || label.includes('argentina');
+            const isUsd = label.includes('usd') || label.includes('dolar') || label.includes('dólar') || label.includes('dollar');
+            const profileCurrency = ((salary && salary.currency) || 'USD').toUpperCase();
+
+            if (isArs && profileCurrency !== 'ARS') {
+                const cachedArs = checkCommonAnswers('salario pesos') || checkCommonAnswers('remuneracion pesos') || checkCommonAnswers('salario en pesos');
+                if (cachedArs !== null) {
+                    setInputValue(input, cachedArs);
+                    filled.push({ field: 'salary_ars_cached', value: cachedArs, label: rawLabel });
+                } else {
+                    unknown.push({ type: 'salary_currency_mismatch', label: rawLabel, expected_currency: 'ARS', profile_currency: profileCurrency, profile_salary: salary.expected });
+                }
+            } else if (isUsd && profileCurrency !== 'USD') {
+                const cachedUsd = checkCommonAnswers('salario usd') || checkCommonAnswers('salary usd');
+                if (cachedUsd !== null) {
+                    setInputValue(input, cachedUsd);
+                    filled.push({ field: 'salary_usd_cached', value: cachedUsd, label: rawLabel });
+                } else {
+                    unknown.push({ type: 'salary_currency_mismatch', label: rawLabel, expected_currency: 'USD', profile_currency: profileCurrency, profile_salary: salary.expected });
+                }
+            } else {
+                setInputValue(input, salaryVal);
+                filled.push({ field: 'salary', value: salaryVal, label: rawLabel });
+            }
         } else if (label.includes('linkedin') || label.includes('perfil')) {
             setInputValue(input, liVal);
             filled.push({ field: 'linkedin', value: liVal, label: rawLabel });
@@ -234,19 +256,51 @@ _AUTOFILL_EVALUATE_JS = r"""
             const opt = options.find(o => o.text.toLowerCase().includes('buenos aires') || o.text.toLowerCase().includes('berisso') || o.text.toLowerCase().includes('la plata'));
             if (opt) chosenVal = opt.value;
         } else if (label.includes('inglés') || label.includes('ingles') || label.includes('english') || label.includes('idioma') || label.includes('language')) {
-            const opt = options.find(o => o.text.toLowerCase().includes('professional') || o.text.toLowerCase().includes('avanzado') || o.text.toLowerCase().includes('c1') || o.text.toLowerCase().includes('b2') || o.text.toLowerCase().includes('conversational') || o.text.toLowerCase().includes('intermedio') || o.text.toLowerCase().includes('fluent'));
+            const profileEng = ((p.languages && p.languages.english) || 'Professional').toLowerCase();
+            let syns = [];
+            if (profileEng.includes('prof') || profileEng.includes('adv') || profileEng.includes('avanz')) {
+                syns = ['professional', 'profesional', 'avanzado', 'advanced', 'c1', 'c2', 'fluido', 'fluent', 'full professional', 'competencia profesional'];
+            } else if (profileEng.includes('conv') || profileEng.includes('interm')) {
+                syns = ['conversational', 'conversacion', 'conversación', 'intermedio', 'intermediate', 'b1', 'b2', 'competencia básica profesional'];
+            } else if (profileEng.includes('nat') || profileEng.includes('bil')) {
+                syns = ['native', 'nativo', 'bilingual', 'bilingüe', 'bilingue', 'competencia bilingüe'];
+            } else {
+                syns = ['professional', 'profesional', 'avanzado', 'advanced', 'c1', 'conversational', 'conversacion', 'conversación', 'fluent', 'fluido'];
+            }
+            const opt = options.find(o => {
+                const t = o.text.toLowerCase();
+                const v = o.value.toLowerCase();
+                return syns.some(s => t.includes(s) || v.includes(s));
+            });
             if (opt) chosenVal = opt.value;
-        } else if (label.includes('educación') || label.includes('educacion') || label.includes('degree') || label.includes('nivel de estudios') || label.includes('título') || label.includes('titulo')) {
-            const opt = options.find(o => o.text.toLowerCase().includes('bachelor') || o.text.toLowerCase().includes('licenciatura') || o.text.toLowerCase().includes('universitario') || o.text.toLowerCase().includes('college') || o.text.toLowerCase().includes('grada') || o.text.toLowerCase().includes('completo'));
+        } else if (label.includes('educación') || label.includes('educacion') || label.includes('degree') || label.includes('nivel de estudios') || label.includes('título') || label.includes('titulo') || label.includes('estudios')) {
+            const opt = options.find(o => {
+                const t = o.text.toLowerCase();
+                const v = o.value.toLowerCase();
+                const syns = ['bachelor', 'licenciatura', 'universitario', 'universidad', 'grado', 'bachelor\'s', 'ingeniería', 'ingenieria', 'terciario', 'college', 'completo', 'en curso'];
+                return syns.some(s => t.includes(s) || v.includes(s));
+            });
             if (opt) chosenVal = opt.value;
-        } else if (label.includes('autorizad') || label.includes('authorized') || label.includes('permit') || label.includes('legal') || label.includes('habilitad')) {
-            const opt = options.find(o => o.text.toLowerCase() === 'yes' || o.text.toLowerCase() === 'sí' || o.text.toLowerCase() === 'si');
+        } else if (label.includes('autorizad') || label.includes('authorized') || label.includes('permit') || label.includes('legal') || label.includes('habilitad') || label.includes('work authorization') || label.includes('derecho a trabajar')) {
+            const opt = options.find(o => {
+                const t = o.text.toLowerCase();
+                const v = o.value.toLowerCase();
+                return t === 'yes' || t === 'sí' || t === 'si' || v === 'yes' || v === 'true' || t.includes('autorizado') || t.includes('habilitado');
+            });
             if (opt) chosenVal = opt.value;
         } else if (label.includes('patrocinio') || label.includes('sponsorship') || label.includes('sponsor') || label.includes('visa')) {
-            const opt = options.find(o => o.text.toLowerCase() === 'no');
+            const opt = options.find(o => {
+                const t = o.text.toLowerCase();
+                const v = o.value.toLowerCase();
+                return t === 'no' || v === 'no' || v === 'false' || t.includes('no requiero') || t.includes('no requiere') || t.includes('no preciso');
+            });
             if (opt) chosenVal = opt.value;
-        } else if (label.includes('remoto') || label.includes('remote') || label.includes('híbrido') || label.includes('hybrid') || label.includes('presencial') || label.includes('relocate')) {
-            const opt = options.find(o => o.text.toLowerCase() === 'yes' || o.text.toLowerCase() === 'sí' || o.text.toLowerCase() === 'si');
+        } else if (label.includes('remoto') || label.includes('remote') || label.includes('híbrido') || label.includes('hibrido') || label.includes('hybrid') || label.includes('presencial') || label.includes('relocate') || label.includes('modalidad')) {
+            const opt = options.find(o => {
+                const t = o.text.toLowerCase();
+                const v = o.value.toLowerCase();
+                return t === 'yes' || t === 'sí' || t === 'si' || v === 'yes' || v === 'true' || t.includes('remoto') || t.includes('híbrido') || t.includes('hibrido');
+            });
             if (opt) chosenVal = opt.value;
         }
 
@@ -401,7 +455,7 @@ async def auto_fill_current_step() -> dict[str, Any]:
         return {"error": str(e)}
 
 
-async def step_easy_apply_wizard(auto_advance: bool = True) -> dict[str, Any]:
+async def step_easy_apply_wizard(auto_advance: bool = True, override_dry_run: bool | None = None) -> dict[str, Any]:
     """Auto-fills the current step and optionally clicks Next/Review/Submit.
 
     Returns the step execution summary and next page state.
@@ -421,7 +475,8 @@ async def step_easy_apply_wizard(auto_advance: bool = True) -> dict[str, Any]:
     # 2. Check if we reached final submit
     if fill_result.get("has_submit") and not fill_result.get("has_next"):
         settings = get_settings()
-        if settings.apply.dry_run:
+        is_dry = override_dry_run if override_dry_run is not None else settings.apply.dry_run
+        if is_dry:
             logger.info("Reached Submit step in dry_run mode — stopping before submission")
             return {
                 "status": "ready_to_submit_dry_run_blocked",
@@ -471,7 +526,7 @@ async def step_easy_apply_wizard(auto_advance: bool = True) -> dict[str, Any]:
     }
 
 
-async def auto_apply_full_flow(max_steps: int = 8) -> dict[str, Any]:
+async def auto_apply_full_flow(max_steps: int = 8, override_dry_run: bool | None = None) -> dict[str, Any]:
     """Execute the entire Easy Apply wizard automatically until review/submit."""
     page = get_page()
     if page is None:
@@ -483,7 +538,7 @@ async def auto_apply_full_flow(max_steps: int = 8) -> dict[str, Any]:
     for step in range(max_steps):
         step_count += 1
         logger.info("Executing Easy Apply step {}/{}...", step_count, max_steps)
-        res = await step_easy_apply_wizard(auto_advance=True)
+        res = await step_easy_apply_wizard(auto_advance=True, override_dry_run=override_dry_run)
 
         if "error" in res:
             return {"error": res["error"], "steps_completed": step_count, "filled": all_filled}
@@ -537,7 +592,8 @@ async def auto_apply_full_flow(max_steps: int = 8) -> dict[str, Any]:
 
             if modal_info.get("has_submit"):
                 settings = get_settings()
-                if settings.apply.dry_run:
+                is_dry = override_dry_run if override_dry_run is not None else settings.apply.dry_run
+                if is_dry:
                     return {
                         "status": "dry_run_completed",
                         "steps_completed": step_count,

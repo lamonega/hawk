@@ -78,9 +78,9 @@ async def snapshot() -> str:
                     return document.body;
                 }
 
-                // Priority: active form root first, then rest of document
+                // Scope strictly to active modal when open, otherwise full document
                 const rootForm = easyApplyRoot();
-                const rootNodes = (rootForm && rootForm !== document.body) ? [rootForm, document.body] : [document.body];
+                const rootNodes = (rootForm && rootForm !== document.body) ? [rootForm] : [document.body];
 
                 for (const root of rootNodes) {
                     for (const sel of selectors) {
