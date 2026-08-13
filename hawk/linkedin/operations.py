@@ -226,7 +226,9 @@ def build_search_url(
 def extract_jobs_list() -> str:
     """Extract job cards from a LinkedIn search results page.
 
-    Returns JSON array of job summaries.
+    Returns JSON array of job summaries. Tries multiple selector strategies
+    including newer LinkedIn DOM patterns, then falls back to extracting all
+    /jobs/view/ links directly from the page.
     """
     page = get_page()
     if page is None:
@@ -236,11 +238,16 @@ def extract_jobs_list() -> str:
         jobs = page.evaluate(
             """
             () => {
+                // Strategy 1: try known card container selectors
                 const cardSelectors = [
                     '.jobs-search-results__list-item',
                     '.scaffold-layout__list li',
                     '[data-view-name="job-card"]',
                     '.job-card-container',
+                    '[data-job-id]',
+                    '[data-occludable-job-id]',
+                    'li[class*="jobs-search"]',
+                    'li[class*="job-card"]',
                 ];
 
                 let cards = [];
@@ -249,43 +256,109 @@ def extract_jobs_list() -> str:
                     if (cards.length > 0) break;
                 }
 
-                return Array.from(cards).map(card => {
-                    const titleEl = card.querySelector('.job-card-list__title--link') ||
-                                    card.querySelector('a.job-card-container__link') ||
-                                    card.querySelector('a[data-control-name="job_card_click"]') ||
-                                    card.querySelector('a[aria-label]');
+                // Strategy 2 (fallback): scrape all /jobs/view/ links on the page
+                if (cards.length === 0) {
+                    const seen = new Set();
+                    const links = document.querySelectorAll('a[href*="/jobs/view/"]');
+                    return Array.from(links)
+                        .map(link => {
+                            const cleanHref = link.href.split('?')[0];
+                            const idMatch = cleanHref.match(/view\\/([\\d]+)\\//);
+                            if (!idMatch || seen.has(idMatch[1])) return null;
+                            seen.add(idMatch[1]);
 
-                    const companyEl = card.querySelector('.artdeco-entity-lockup__subtitle') ||
-                                      card.querySelector('.job-card-container__primary-description') ||
-                                      card.querySelector('.job-card-container__company-name');
+                            const card = link.closest('li') || link.parentElement;
+                            const titleEl = card
+                                ? (card.querySelector('strong') ||
+                                   card.querySelector('[class*="title"]'))
+                                : null;
+                            const companyEl = card
+                                ? card.querySelector('[class*="company"], [class*="subtitle"]')
+                                : null;
+                            const locationEl = card
+                                ? card.querySelector('[class*="location"], [class*="caption"]')
+                                : null;
+                            const easyApplyEl = card
+                                ? card.querySelector('[class*="easy-apply"], [class*="apply"]')
+                                : null;
 
-                    const locationEl = card.querySelector('.artdeco-entity-lockup__caption') ||
-                                       card.querySelector('.job-card-container__metadata-item') ||
-                                       card.querySelector('.job-card-container__location');
+                            return {
+                                job_id: idMatch[1],
+                                role: titleEl
+                                    ? titleEl.innerText.trim()
+                                    : (link.getAttribute('aria-label') || link.innerText.trim()),
+                                company: companyEl ? companyEl.innerText.trim() : '',
+                                location: locationEl ? locationEl.innerText.trim() : '',
+                                link: cleanHref,
+                                easy_apply: !!easyApplyEl,
+                                already_applied: false,
+                            };
+                        })
+                        .filter(j => j && j.job_id);
+                }
 
-                    const linkEl = card.querySelector('a[href*="/jobs/view/"]') ||
-                                   card.querySelector('a');
+                // Process cards found via Strategy 1
+                const seen = new Set();
+                return Array.from(cards)
+                    .map(card => {
+                        const titleEl =
+                            card.querySelector('.job-card-list__title--link') ||
+                            card.querySelector('a.job-card-container__link') ||
+                            card.querySelector('a[data-control-name="job_card_click"]') ||
+                            card.querySelector('strong') ||
+                            card.querySelector('a[aria-label]');
 
-                    const easyApply = card.querySelector('.job-card-container__apply-method') ||
-                                      card.querySelector('[data-testid="job-card-list-item__easy-apply"]');
+                        const companyEl =
+                            card.querySelector('.artdeco-entity-lockup__subtitle') ||
+                            card.querySelector('.job-card-container__primary-description') ||
+                            card.querySelector('.job-card-container__company-name') ||
+                            card.querySelector('[class*="company"]') ||
+                            card.querySelector('[class*="subtitle"]');
 
-                    // Detect "Already applied" badge
-                    const appliedBadge = card.querySelector('.jobs-search-results-list__state-message') ||
-                                          card.querySelector('.artdeco-inline-feedback');
+                        const locationEl =
+                            card.querySelector('.artdeco-entity-lockup__caption') ||
+                            card.querySelector('.job-card-container__metadata-item') ||
+                            card.querySelector('.job-card-container__location') ||
+                            card.querySelector('[class*="location"]') ||
+                            card.querySelector('[class*="caption"]');
 
-                    const link = linkEl ? linkEl.href : '';
-                    const idMatch = link.match(/view\\/([\\d]+)\\//);
+                        const linkEl =
+                            card.querySelector('a[href*="/jobs/view/"]') ||
+                            card.querySelector('a');
 
-                    return {
-                        job_id: idMatch ? idMatch[1] : '',
-                        role: titleEl ? titleEl.innerText.trim() : '',
-                        company: companyEl ? companyEl.innerText.trim() : '',
-                        location: locationEl ? locationEl.innerText.trim() : '',
-                        link: link,
-                        easy_apply: easyApply ? true : false,
-                        already_applied: appliedBadge ? true : false,
-                    };
-                }).filter(j => j.role && j.link);
+                        const easyApplyEl =
+                            card.querySelector('.job-card-container__apply-method') ||
+                            card.querySelector('[data-testid="job-card-list-item__easy-apply"]') ||
+                            card.querySelector('[class*="easy-apply"]');
+
+                        const appliedBadge =
+                            card.querySelector('.jobs-search-results-list__state-message') ||
+                            card.querySelector('.artdeco-inline-feedback');
+
+                        // Also try data attributes for job ID
+                        const dataJobId =
+                            card.getAttribute('data-job-id') ||
+                            card.getAttribute('data-occludable-job-id') ||
+                            (card.getAttribute('data-entity-urn') || '').match(/\\d+/)?.[0];
+
+                        const link = linkEl ? linkEl.href.split('?')[0] : '';
+                        const idMatch = link.match(/view\\/([\\d]+)\\//);
+                        const job_id = idMatch ? idMatch[1] : (dataJobId || '');
+
+                        if (!job_id || seen.has(job_id)) return null;
+                        seen.add(job_id);
+
+                        return {
+                            job_id,
+                            role: titleEl ? titleEl.innerText.trim() : '',
+                            company: companyEl ? companyEl.innerText.trim() : '',
+                            location: locationEl ? locationEl.innerText.trim() : '',
+                            link: link,
+                            easy_apply: !!easyApplyEl,
+                            already_applied: !!appliedBadge,
+                        };
+                    })
+                    .filter(j => j && j.role && j.link);
             }
             """
         )

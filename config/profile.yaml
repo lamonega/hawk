@@ -1,88 +1,50 @@
-# hawk user profile — Fill this in so hawk can answer LinkedIn form questions automatically.
-# hawk will use this data to pre-fill Easy Apply forms. When a question doesn't match
-# any profile field, hawk will ask you in chat and save the answer for next time.
-#
-# IMPORTANT: If 'completed_at' is empty, the profile is considered INCOMPLETE.
-# The agent will ask you to fill it before applying to any jobs.
-
-# Set automatically when the profile is completed (YYYY-MM-DDTHH:MM:SS)
-completed_at: ""
-
-personal:
-  first_name: ""
-  last_name: ""
-  email: ""
-  phone: ""
-  city: ""
-  state: ""
-  country: ""
-  postal_code: ""
-
-# Links (optional)
+common_answers: {}
+completed_at: '2026-08-13T21:06:15+00:00'
+education:
+  degree: Bachelor's
+  field: Information Systems
+  graduation_year: '2027'
+  school: Facultad de Informática - UNLP
+experience: []
+languages: {}
 links:
-  linkedin: ""
-  github: ""
-  portfolio: ""
-  website: ""
-
-# Professional summary
+  github: github.com/lflamonega
+  linkedin: linkedin.com/in/lflamonega
+  portfolio: ''
+  website: ''
+personal:
+  city: Berisso
+  country: Argentina
+  email: lflamonega@gmail.com
+  first_name: Laureano
+  last_name: Francisco Lamonega
+  phone: 221 695 9945
+  postal_code: '1923'
+  state: Buenos Aires
+preferences:
+  min_salary: ''
+  notice_period: 2 weeks
+  remote_only: true
+  start_date: Immediately
 professional:
-  headline: ""
-  summary: ""
-  years_of_experience: ""
-  current_title: ""
-  current_company: ""
-
-# Work authorization (common LinkedIn question)
+  current_company: Municipalidad de Berisso
+  current_title: DevOps Engineer
+  headline: DevOps Engineer | CI/CD | Docker | Linux | AWS | Terraform
+  summary: DevOps Engineer with 2 years of experience designing CI/CD pipelines, containerizing
+    applications with Docker, and administering Linux servers. Currently working at
+    Municipalidad de Berisso building automation workflows with GitHub Actions, Forgejo
+    Actions, Nginx, and PowerShell/Bash scripting. Experienced with AWS (EC2, EKS,
+    Terraform), Nagios monitoring, and VMware/VirtualBox virtualization. Studying
+    Information Systems at UNLP.
+  years_of_experience: '2'
+salary:
+  currency: USD
+  current: ''
+  expected: $950 USD/month
+  negotiable: true
+skills: {}
 work_authorization:
   authorized: true
+  country: Argentina
   sponsorship_required: false
-  country: ""
-  work_status: ""  # e.g. "US Citizen", "Green Card", "H1B", "OPT", "None"
-
-# Education
-education:
-  degree: ""        # e.g. "Bachelor's", "Master's", "PhD"
-  field: ""         # e.g. "Computer Science"
-  school: ""        # e.g. "MIT"
-  graduation_year: ""
-
-# Skills — map skill name to proficiency level (1-5)
-skills:
-  # python: 4
-  # javascript: 3
-  # react: 3
-
-# Experience — list of previous roles
-experience:
-  # - title: "Software Engineer"
-  #   company: "Google"
-  #   duration: "2 years"
-  #   description: "Built microservices..."
-
-# Salary expectations
-salary:
-  current: ""
-  expected: ""
-  currency: "USD"
-  negotiable: true
-
-# Languages — map language to proficiency
-languages:
-  # english: "Fluent"
-  # spanish: "Native"
-
-# Preferences for job search
-preferences:
-  remote_only: true
-  min_salary: ""
-  notice_period: "2 weeks"
-  start_date: "Immediately"
-
-# Common answers — cache for recurring LinkedIn questions
-# hawk will save answers here after you answer them in chat.
-# Format: question_pattern -> answer
-common_answers:
-  # "years of experience": "3"
-  # "willing to relocate": "No"
-  # "start date": "Immediately"
+  work_status: No authorization
