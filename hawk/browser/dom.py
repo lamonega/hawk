@@ -9,10 +9,13 @@ from loguru import logger
 from playwright.async_api import Page
 
 from hawk.browser.driver import get_page
+import hawk.browser.driver as driver_state
 
-# Global state for the last snapshot
-_last_snapshot: dict[str, Any] = {}
-_last_elements: list[dict[str, Any]] = []
+# Global state delegated to driver module to survive hot reloads
+if not hasattr(driver_state, "_last_snapshot"):
+    driver_state._last_snapshot = {}
+if not hasattr(driver_state, "_last_elements"):
+    driver_state._last_elements = []
 
 
 async def snapshot() -> str:
@@ -68,13 +71,16 @@ async def snapshot() -> str:
                                        tag === 'select' ? 'combobox' :
                                        tag === 'textarea' ? 'textbox' : tag);
 
+                        const labelEl = el.labels && el.labels[0] ? el.labels[0] : el.closest('div, .fb-dash-form-element, section')?.querySelector('label');
                         const name = el.getAttribute('aria-label') ||
                                       el.getAttribute('title') ||
+                                      (labelEl ? labelEl.innerText?.trim() : '') ||
                                       el.innerText?.trim().substring(0, 100) ||
                                       el.getAttribute('placeholder') ||
                                       el.getAttribute('name') ||
                                       '';
 
+                        const id = el.id || '';
                         const value = el.value || el.getAttribute('value') || '';
                         const disabled = el.disabled || el.getAttribute('aria-disabled') === 'true';
                         const readonly = el.readOnly || el.getAttribute('aria-readonly') === 'true';
@@ -82,6 +88,7 @@ async def snapshot() -> str:
 
                         results.push({
                             tag: tag,
+                            id: id,
                             role: role,
                             name: name,
                             value: value,
@@ -102,6 +109,7 @@ async def snapshot() -> str:
             elements.append({
                 "index": i,
                 "tag": el.get("tag", ""),
+                "id": el.get("id", ""),
                 "role": el.get("role", ""),
                 "name": el.get("name", ""),
                 "value": el.get("value", ""),
@@ -117,10 +125,9 @@ async def snapshot() -> str:
             "elements": elements,
         }
 
-        # Store for later use
-        global _last_snapshot, _last_elements
-        _last_snapshot = result
-        _last_elements = elements
+        # Store for later use in persistent driver state
+        driver_state._last_snapshot = result
+        driver_state._last_elements = elements
 
         logger.debug("Snapshot: {} elements on {}", len(elements), page.url)
         return json.dumps(result, indent=2)
@@ -132,23 +139,43 @@ async def snapshot() -> str:
 
 def get_element_by_index(index: int) -> dict | None:
     """Get element info from last snapshot by index."""
-    if index < 0 or index >= len(_last_elements):
+    elems = getattr(driver_state, "_last_elements", [])
+    if index < 0 or index >= len(elems):
         return None
-    return _last_elements[index]
+    return elems[index]
 
 
 async def _find_locator_for_element(page: Page, element: dict) -> Any | None:
     """Find a Playwright locator for an element from snapshot data."""
     name = element.get("name", "")
     tag = element.get("tag", "")
+    el_id = element.get("id", "")
     href = element.get("href", "")
     role = element.get("role", "")
     el_type = element.get("type", "")
+
+    # By ID
+    if el_id:
+        try:
+            loc = page.locator(f"#{el_id}").first
+            if await loc.count() > 0:
+                return loc
+        except Exception:
+            pass
 
     # For links with href, navigate directly
     if tag == "a" and href:
         try:
             return page.locator(f'a[href="{href}"]').first
+        except Exception:
+            pass
+
+    # For tel inputs
+    if tag == "input" and el_type == "tel":
+        try:
+            loc = page.locator('input[type="tel"]').first
+            if await loc.count() > 0:
+                return loc
         except Exception:
             pass
 
@@ -159,32 +186,37 @@ async def _find_locator_for_element(page: Page, element: dict) -> Any | None:
         except Exception:
             pass
 
-    if not name:
-        return None
+    # Try label / name
+    if name:
+        try:
+            locator = page.get_by_label(name, exact=False)
+            if await locator.count() > 0:
+                return locator.first
+        except Exception:
+            pass
 
-    # Try role + name selector
-    try:
-        locator = page.get_by_role(role, name=name, exact=False)
-        if await locator.count() > 0:
-            return locator.first
-    except Exception:
-        pass
+        try:
+            locator = page.get_by_role(role, name=name, exact=False)
+            if await locator.count() > 0:
+                return locator.first
+        except Exception:
+            pass
 
-    # Fallback: try text content
-    try:
-        locator = page.get_by_text(name, exact=False)
-        if await locator.count() > 0:
-            return locator.first
-    except Exception:
-        pass
+        try:
+            locator = page.get_by_text(name, exact=False)
+            if await locator.count() > 0:
+                return locator.first
+        except Exception:
+            pass
 
-    # Fallback: try label
-    try:
-        locator = page.get_by_label(name, exact=False)
-        if await locator.count() > 0:
-            return locator.first
-    except Exception:
-        pass
+    # Fallback by tag and type
+    if tag == "input" and el_type:
+        try:
+            loc = page.locator(f'input[type="{el_type}"]').first
+            if await loc.count() > 0:
+                return loc
+        except Exception:
+            pass
 
     return None
 

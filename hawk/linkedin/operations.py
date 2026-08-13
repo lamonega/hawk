@@ -23,33 +23,36 @@ _DETECT_FIELDS_JS = """
     const results = [];
     const modal = document.querySelector('.jobs-easy-apply-modal') ||
                   document.querySelector('[role="dialog"]') ||
-                  document.querySelector('.artdeco-modal');
-
-    if (!modal) return {fields: [], has_submit: false, has_next: false, total_fields: 0};
+                  document.querySelector('.artdeco-modal') ||
+                  document.querySelector('div[data-test-modal]') ||
+                  document.querySelector('div[aria-modal="true"]') ||
+                  document.body;
 
     // Text inputs
     modal.querySelectorAll('input[type="text"], input[type="email"], input[type="tel"], input[type="number"], input[type="url"], input:not([type])').forEach(el => {
         const label = el.getAttribute('aria-label') ||
-                      el.closest('.jobs-easy-apply-form-section__group')?.querySelector('label')?.innerText ||
+                      el.closest('.jobs-easy-apply-form-section__group, .fb-dash-form-element, div[data-test-form-element]')?.querySelector('label')?.innerText ||
                       el.getAttribute('name') || '';
-        results.push({
-            type: 'text',
-            name: label.trim(),
-            required: el.required || el.getAttribute('aria-required') === 'true',
-            value: el.value || '',
-            input_type: el.type || 'text',
-        });
+        if (label.trim()) {
+            results.push({
+                type: 'text',
+                name: label.trim().split('\\n')[0].trim(),
+                required: el.required || el.getAttribute('aria-required') === 'true',
+                value: el.value || '',
+                input_type: el.type || 'text',
+            });
+        }
     });
 
     // Selects
     modal.querySelectorAll('select').forEach(el => {
         const label = el.getAttribute('aria-label') ||
-                      el.closest('.jobs-easy-apply-form-section__group')?.querySelector('label')?.innerText ||
+                      el.closest('.jobs-easy-apply-form-section__group, .fb-dash-form-element, div[data-test-form-element]')?.querySelector('label')?.innerText ||
                       el.getAttribute('name') || '';
         const options = Array.from(el.options).map(o => ({value: o.value, text: o.text}));
         results.push({
             type: 'select',
-            name: label.trim(),
+            name: label.trim().split('\\n')[0].trim(),
             required: el.required || el.getAttribute('aria-required') === 'true',
             value: el.value,
             options: options,
@@ -61,10 +64,10 @@ _DETECT_FIELDS_JS = """
     modal.querySelectorAll('input[type="radio"]').forEach(el => {
         const name = el.getAttribute('name') || 'unknown';
         if (!radioGroups[name]) {
-            const label = el.closest('.jobs-easy-apply-form-section__group')?.querySelector('label')?.innerText || name;
+            const label = el.closest('.jobs-easy-apply-form-section__group, .fb-dash-form-element, div[data-test-form-element]')?.querySelector('label, legend')?.innerText || name;
             radioGroups[name] = {
                 type: 'radio',
-                name: label.trim(),
+                name: label.trim().split('\\n')[0].trim(),
                 required: true,
                 options: [],
             };
@@ -82,7 +85,7 @@ _DETECT_FIELDS_JS = """
                       el.getAttribute('name') || '';
         results.push({
             type: 'checkbox',
-            name: label.trim(),
+            name: label.trim().split('\\n')[0].trim(),
             required: false,
             checked: el.checked,
         });
@@ -91,20 +94,32 @@ _DETECT_FIELDS_JS = """
     // File uploads
     modal.querySelectorAll('input[type="file"]').forEach(el => {
         const label = el.getAttribute('aria-label') ||
-                      el.closest('.jobs-easy-apply-form-section__group')?.querySelector('label')?.innerText ||
+                      el.closest('.jobs-easy-apply-form-section__group, .fb-dash-form-element, div[data-test-form-element]')?.querySelector('label')?.innerText ||
                       'Resume/CV';
         results.push({
             type: 'file',
-            name: label.trim(),
+            name: label.trim().split('\\n')[0].trim(),
             required: el.required,
         });
     });
 
-    // Buttons
-    const submitBtn = modal.querySelector('button[aria-label="Submit application"]');
-    const nextBtn = modal.querySelector('button[aria-label="Continue to next step"]') ||
-                    modal.querySelector('button[aria-label="Continue to review"]') ||
-                    modal.querySelector('button.artdeco-button--primary');
+    // Buttons (English and Spanish)
+    const submitBtn = modal.querySelector('button[aria-label*="Submit application"]') ||
+                      modal.querySelector('button[aria-label*="Enviar solicitud"]') ||
+                      Array.from(modal.querySelectorAll('button')).find(b => {
+                          const t = (b.innerText || '').toLowerCase();
+                          return t === 'submit' || t === 'enviar solicitud';
+                      });
+
+    const nextBtn = modal.querySelector('button[aria-label*="Continue"]') ||
+                    modal.querySelector('button[aria-label*="Review"]') ||
+                    modal.querySelector('button[aria-label*="Siguiente"]') ||
+                    modal.querySelector('button[aria-label*="Revisar"]') ||
+                    modal.querySelector('button.artdeco-button--primary') ||
+                    Array.from(modal.querySelectorAll('button')).find(b => {
+                        const t = (b.innerText || '').toLowerCase();
+                        return t === 'next' || t === 'continue' || t === 'review' || t === 'siguiente' || t === 'continuar' || t === 'revisar';
+                    });
 
     return {
         fields: results,
@@ -564,14 +579,17 @@ async def click_easy_apply() -> str:
         selectors = [
             'button.jobs-apply-button',
             'button.apply-button--easy-apply',
+            'button.apply-button',
             'button[aria-label*="Easy Apply"]',
             'button[aria-label*="Solicitud sencilla"]',
             'button.artdeco-button--primary:has-text("Easy Apply")',
             'button.artdeco-button--primary:has-text("Solicitud sencilla")',
             'button:has-text("Easy Apply")',
             'button:has-text("Solicitud sencilla")',
+            'button:has-text("Solicitar")',
             'button[aria-label*="Apply"]',
             'button[aria-label*="Solicitar"]',
+            'button[class*="apply-button"]',
         ]
 
         for selector in selectors:
@@ -733,14 +751,22 @@ async def click_next_or_submit() -> str:
     try:
         # Priority: Submit first, then Next/Continue/Review
         selectors = [
-            ("submit", 'button[aria-label="Submit application"]'),
+            ("submit", 'button[aria-label*="Submit application"]'),
+            ("submit", 'button[aria-label*="Enviar solicitud"]'),
             ("submit", 'button:has-text("Submit")'),
-            ("next", 'button[aria-label="Continue to next step"]'),
-            ("next", 'button[aria-label="Continue to review"]'),
+            ("submit", 'button:has-text("Enviar solicitud")'),
+            ("submit", 'button:has-text("Enviar")'),
+            ("next", 'button[aria-label*="Continue"]'),
+            ("next", 'button[aria-label*="Review"]'),
+            ("next", 'button[aria-label*="Siguiente"]'),
+            ("next", 'button[aria-label*="Revisar"]'),
             ("next", 'button.artdeco-button--primary'),
             ("next", 'button:has-text("Next")'),
             ("next", 'button:has-text("Continue")'),
             ("next", 'button:has-text("Review")'),
+            ("next", 'button:has-text("Siguiente")'),
+            ("next", 'button:has-text("Continuar")'),
+            ("next", 'button:has-text("Revisar")'),
         ]
 
         for action, selector in selectors:

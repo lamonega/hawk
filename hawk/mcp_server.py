@@ -89,9 +89,11 @@ async def browser_snapshot() -> str:
     Returns:
         JSON string with page URL, title, and indexed interactive elements.
     """
-    from hawk.browser.dom import snapshot
+    import importlib
+    import hawk.browser.dom
+    importlib.reload(hawk.browser.dom)
 
-    return await snapshot()
+    return await hawk.browser.dom.snapshot()
 
 
 @server.tool()
@@ -104,9 +106,11 @@ async def browser_click(element_index: int) -> str:
     Returns:
         Result of the click action.
     """
-    from hawk.browser.dom import click_element
+    import importlib
+    import hawk.browser.dom
+    importlib.reload(hawk.browser.dom)
 
-    return await click_element(element_index)
+    return await hawk.browser.dom.click_element(element_index)
 
 
 @server.tool()
@@ -121,9 +125,11 @@ async def browser_type(element_index: int, text: str, clear: bool = False) -> st
     Returns:
         Result of the type action.
     """
-    from hawk.browser.dom import type_element
+    import importlib
+    import hawk.browser.dom
+    importlib.reload(hawk.browser.dom)
 
-    return await type_element(element_index, text, clear)
+    return await hawk.browser.dom.type_element(element_index, text, clear)
 
 
 @server.tool()
@@ -137,9 +143,11 @@ async def browser_select(element_index: int, value: str) -> str:
     Returns:
         Result of the select action.
     """
-    from hawk.browser.dom import select_element
+    import importlib
+    import hawk.browser.dom
+    importlib.reload(hawk.browser.dom)
 
-    return await select_element(element_index, value)
+    return await hawk.browser.dom.select_element(element_index, value)
 
 
 @server.tool()
@@ -153,9 +161,11 @@ async def browser_upload_file(element_index: int, file_path: str) -> str:
     Returns:
         Result of the upload.
     """
-    from hawk.browser.dom import upload_file
+    import importlib
+    import hawk.browser.dom
+    importlib.reload(hawk.browser.dom)
 
-    return await upload_file(element_index, file_path)
+    return await hawk.browser.dom.upload_file(element_index, file_path)
 
 
 @server.tool()
@@ -269,15 +279,56 @@ async def linkedin_click_easy_apply() -> str:
 
 
 @server.tool()
+async def linkedin_auto_fill_step() -> str:
+    """Inspect and auto-fill the current Easy Apply form step using user profile data.
+
+    Automatically completes phone, location, experience questions, yes/no radios,
+    unfollows company checkbox, and clicks Next/Review.
+
+    Returns:
+        JSON with filled fields, status, and whether next step was reached.
+    """
+    import importlib
+    import hawk.linkedin.autofill
+    importlib.reload(hawk.linkedin.autofill)
+
+    result = await hawk.linkedin.autofill.step_easy_apply_wizard(auto_advance=True)
+    return json.dumps(result, indent=2)
+
+
+@server.tool()
+async def linkedin_auto_apply(max_steps: int = 8) -> str:
+    """Execute the entire Easy Apply wizard automatically until review/submit.
+
+    Auto-fills all screens (contact info, experience, legal, resume selection)
+    and stops before final submission if apply.dry_run=true.
+
+    Args:
+        max_steps: Maximum wizard steps to attempt (default 8).
+
+    Returns:
+        JSON summary of the application flow and filled fields.
+    """
+    import importlib
+    import hawk.linkedin.autofill
+    importlib.reload(hawk.linkedin.autofill)
+
+    result = await hawk.linkedin.autofill.auto_apply_full_flow(max_steps=max_steps)
+    return json.dumps(result, indent=2)
+
+
+@server.tool()
 async def linkedin_detect_fields() -> str:
     """Detect form fields in the current Easy Apply modal.
 
     Returns JSON with fields array (type, name, required, options) and has_submit/has_next flags.
     Use this to understand what needs to be filled before calling browser_type/browser_select.
     """
-    from hawk.linkedin.operations import detect_form_fields
+    import importlib
+    import hawk.linkedin.operations
+    importlib.reload(hawk.linkedin.operations)
 
-    return await detect_form_fields()
+    return await hawk.linkedin.operations.detect_form_fields()
 
 
 @server.tool()
@@ -287,9 +338,11 @@ async def linkedin_next_step() -> str:
     Returns:
         Which button was clicked (clicked_next, clicked_submit, or no_button_found).
     """
-    from hawk.linkedin.operations import click_next_or_submit
+    import importlib
+    import hawk.linkedin.operations
+    importlib.reload(hawk.linkedin.operations)
 
-    return await click_next_or_submit()
+    return await hawk.linkedin.operations.click_next_or_submit()
 
 
 @server.tool()
@@ -302,9 +355,11 @@ async def linkedin_submit() -> str:
     Returns:
         'submitted', 'dry_run_blocked', or error.
     """
-    from hawk.linkedin.operations import submit_application
+    import importlib
+    import hawk.linkedin.operations
+    importlib.reload(hawk.linkedin.operations)
 
-    return await submit_application()
+    return await hawk.linkedin.operations.submit_application()
 
 
 @server.tool()
