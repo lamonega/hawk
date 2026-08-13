@@ -55,12 +55,32 @@ async def snapshot() -> str:
                 const results = [];
                 let hawkIndex = 0;
 
-                // Priority: active modal first, then rest of document
-                const modal = document.querySelector('.jobs-easy-apply-modal') ||
-                              document.querySelector('div[data-test-modal-id="easy-apply-modal"]') ||
-                              document.querySelector('[role="dialog"]') ||
-                              document.querySelector('.artdeco-modal');
-                const rootNodes = modal ? [modal, document.body] : [document.body];
+                function easyApplyRoot() {
+                    const dlg = document.querySelector('[role="dialog"]');
+                    if (dlg && (dlg.querySelector('input, select, textarea, [role="radio"], button[aria-label*="Enviar"], button[aria-label*="Submit"], button[aria-label*="Continue"], button[aria-label*="Siguiente"]') || dlg.classList.contains('jobs-easy-apply-modal') || dlg.classList.contains('artdeco-modal'))) {
+                        return dlg;
+                    }
+                    const modalOld = document.querySelector('.jobs-easy-apply-modal, div[data-test-modal-id="easy-apply-modal"], .artdeco-modal');
+                    if (modalOld) return modalOld;
+
+                    const col = document.querySelector('[data-testid="lazy-column"]') || document.querySelector('#lazy-column');
+                    if (col) {
+                        for (const card of col.children) {
+                            const t = (card.innerText || '').trim().toLowerCase();
+                            const isStep = /^(contact info|datos de contacto|experience|experiencia|legal|información legal|additional questions|preguntas adicionales|review|revisar|submit|confirmar|home address|dirección|education|educación|work authorization|autorización|resume|currículum|cv)/i.test(t)
+                                           || /^paso \d/i.test(t)
+                                           || /^step \d/i.test(t);
+                            if (isStep && card.querySelector('input, select, textarea, [role="radio"]')) {
+                                return card;
+                            }
+                        }
+                    }
+                    return document.body;
+                }
+
+                // Priority: active form root first, then rest of document
+                const rootForm = easyApplyRoot();
+                const rootNodes = (rootForm && rootForm !== document.body) ? [rootForm, document.body] : [document.body];
 
                 for (const root of rootNodes) {
                     for (const sel of selectors) {
@@ -285,16 +305,35 @@ async def select_element(element_index: int, value: str) -> str:
 
     element = get_element_by_index(element_index)
 
-    # Strategy 0: Direct search across all modal selects
+    # Strategy 0: Direct search across all form / modal selects
     try:
-        selected_text = await page.evaluate("""
+        selected_text = await page.evaluate(r"""
             (targetVal) => {
-                const modal = document.querySelector('.jobs-easy-apply-modal') ||
-                              document.querySelector('div[data-test-modal-id="easy-apply-modal"]') ||
-                              document.querySelector('[role="dialog"]') ||
-                              document.querySelector('.artdeco-modal') ||
-                              document.body;
-                const selects = Array.from(modal.querySelectorAll('select'));
+                function easyApplyRoot() {
+                    const dlg = document.querySelector('[role="dialog"]');
+                    if (dlg && (dlg.querySelector('input, select, textarea, [role="radio"]') || dlg.classList.contains('jobs-easy-apply-modal') || dlg.classList.contains('artdeco-modal'))) {
+                        return dlg;
+                    }
+                    const modalOld = document.querySelector('.jobs-easy-apply-modal, div[data-test-modal-id="easy-apply-modal"], .artdeco-modal');
+                    if (modalOld) return modalOld;
+
+                    const col = document.querySelector('[data-testid="lazy-column"]') || document.querySelector('#lazy-column');
+                    if (col) {
+                        for (const card of col.children) {
+                            const t = (card.innerText || '').trim().toLowerCase();
+                            const isStep = /^(contact info|datos de contacto|experience|experiencia|legal|información legal|additional questions|preguntas adicionales|review|revisar|submit|confirmar|home address|dirección|education|educación|work authorization|autorización|resume|currículum|cv)/i.test(t)
+                                           || /^paso \d/i.test(t)
+                                           || /^step \d/i.test(t);
+                            if (isStep && card.querySelector('input, select, textarea, [role="radio"]')) {
+                                return card;
+                            }
+                        }
+                    }
+                    return document.body;
+                }
+
+                const root = easyApplyRoot();
+                const selects = Array.from(root.querySelectorAll('select'));
                 for (const sel of selects) {
                     for (let i = 0; i < sel.options.length; i++) {
                         const opt = sel.options[i];

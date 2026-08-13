@@ -265,3 +265,197 @@ def test_spanish_profile_matching():
     assert match_field("¿Necesitas sponsor para visa?", p) == "No"
     assert match_field("Salario pretendido", p) == "950"
     assert match_field("Nivel de inglés", p) == "Professional"
+
+
+@pytest.mark.asyncio
+async def test_extract_jobs_list_sdui_2026_dom():
+    pw = await async_playwright().start()
+    browser = await pw.chromium.launch(headless=True)
+    page = await browser.new_page()
+
+    html = """
+    <!DOCTYPE html>
+    <html>
+    <head><title>LinkedIn Jobs</title></head>
+    <body>
+        <div data-testid="lazy-column" id="lazy-column">
+            <!-- Job 1 -->
+            <div class="_1e5cedba">
+                <div role="button" componentkey="job-card-component-ref-4452382915">
+                    <p class="d3e5c957 _966c554b">
+                        <span aria-hidden="true">Staff Software Engineer</span>
+                        <span class="_4da622bc">Seleccionado, Staff Software Engineer (empleo verificado)</span>
+                    </p>
+                    <div class="ced15e10">
+                        <p>N-iX Tech</p>
+                        <p>Buenos Aires y alrededores (Híbrido)</p>
+                    </div>
+                    <div>
+                        <span>Solicitud sencilla</span>
+                        <svg id="linkedin-bug-small"></svg>
+                    </div>
+                </div>
+            </div>
+            <hr role="presentation">
+            <!-- Job 2 -->
+            <div class="_1e5cedba">
+                <div role="button" componentkey="job-card-component-ref-9988776655">
+                    <p class="d3e5c957 _966c554b">
+                        <span aria-hidden="true">Python Lead Architect</span>
+                    </p>
+                    <div class="ced15e10">
+                        <p>Cloud Innovate</p>
+                        <p>Remoto, Argentina</p>
+                    </div>
+                    <div>
+                        <span>Candidatura enviada</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </body>
+    </html>
+    """
+    await page.set_content(html)
+    driver_module._page = page
+    driver_module._browser = browser
+
+    raw_jobs = await extract_jobs_list()
+    jobs = json.loads(raw_jobs)
+
+    assert len(jobs) == 2
+    assert jobs[0]["job_id"] == "4452382915"
+    assert jobs[0]["role"] == "Staff Software Engineer"
+    assert jobs[0]["company"] == "N-iX Tech"
+    assert "Buenos Aires" in jobs[0]["location"]
+    assert jobs[0]["easy_apply"] is True
+    assert jobs[0]["already_applied"] is False
+
+    assert jobs[1]["job_id"] == "9988776655"
+    assert jobs[1]["role"] == "Python Lead Architect"
+    assert jobs[1]["company"] == "Cloud Innovate"
+    assert jobs[1]["already_applied"] is True
+
+    await browser.close()
+    await pw.stop()
+
+
+@pytest.mark.asyncio
+async def test_extract_job_details_sdui_2026_dom():
+    pw = await async_playwright().start()
+    browser = await pw.chromium.launch(headless=True)
+    page = await browser.new_page()
+
+    html = """
+    <!DOCTYPE html>
+    <html>
+    <head><title>Staff Engineer | N-iX | LinkedIn</title></head>
+    <body>
+        <div data-testid="lazy-column" id="lazy-column">
+            <div>
+                <div>
+                    <a href="/company/n-ix/life/">N-iX Global</a>
+                    <p class="d3e5c957 _062c687f">Staff Software Engineer (Backend)</p>
+                    <p>Buenos Aires, Argentina · hace 1 día · 17 solicitudes</p>
+                    <div class="_1444193b _70473361">
+                        <a>Híbrido</a>
+                    </div>
+                </div>
+                <div>
+                    <h2>Acerca del empleo</h2>
+                    <p>Looking for a Senior/Staff Python Backend developer.</p>
+                    <button>Ver más</button>
+                </div>
+                <div>
+                    <button aria-label="Solicitud sencilla">Solicitud sencilla</button>
+                </div>
+                <div>
+                    <a data-tracking-control-name="public_jobs_hirer-card">John Recruiter</a>
+                </div>
+            </div>
+        </div>
+    </body>
+    </html>
+    """
+    await page.set_content(html)
+    driver_module._page = page
+    driver_module._browser = browser
+
+    raw_details = await extract_job_details()
+    details = json.loads(raw_details)
+
+    assert details["role"] == "Staff Software Engineer (Backend)"
+    assert details["company"] == "N-iX Global"
+    assert details["location"] == "Buenos Aires, Argentina"
+    assert details["workplace_type"] == "Híbrido"
+    assert "Senior/Staff Python Backend" in details["description"]
+    assert details["easy_apply"] is True
+    assert details["already_applied"] is False
+    assert "John Recruiter" in details["recruiter"]
+
+    await browser.close()
+    await pw.stop()
+
+
+@pytest.mark.asyncio
+async def test_detect_form_fields_sdui_2026_inline_form():
+    pw = await async_playwright().start()
+    browser = await pw.chromium.launch(headless=True)
+    page = await browser.new_page()
+
+    html = """
+    <!DOCTYPE html>
+    <html>
+    <body>
+        <!-- Background search filter checkboxes that should NOT be detected -->
+        <aside>
+            <label><input type="checkbox" name="f_TPR" /> Últimas 24 horas</label>
+            <label><input type="checkbox" name="f_E" /> Experiencia</label>
+        </aside>
+
+        <!-- Inline Easy Apply form inside lazy-column card 0 -->
+        <div data-testid="lazy-column" id="lazy-column">
+            <div class="form-card-0">
+                <p>Contact info</p>
+                <div class="_85ba3e52">
+                    <label for="input-phone">Número de teléfono móvil*</label>
+                    <input id="input-phone" type="tel" value="" required />
+                </div>
+                <div class="_85ba3e52">
+                    <label for="input-email">Correo electrónico*</label>
+                    <input id="input-email" type="email" value="" required />
+                </div>
+                <div class="_85ba3e52">
+                    <label for="input-city">Ciudad de residencia</label>
+                    <input id="input-city" type="text" value="" />
+                </div>
+                <div>
+                    <label><input type="checkbox" name="followCompany" checked /> Seguir a la empresa</label>
+                </div>
+            </div>
+        </div>
+
+        <!-- Sticky footer with Next button outside lazy-column -->
+        <footer>
+            <button type="button" aria-label="Siguiente paso">Siguiente</button>
+        </footer>
+    </body>
+    </html>
+    """
+    await page.set_content(html)
+    driver_module._page = page
+    driver_module._browser = browser
+
+    raw_fields = await detect_form_fields()
+    fields_data = json.loads(raw_fields)
+
+    # Must detect only the 4 elements in the form card (3 inputs + 1 follow checkbox)
+    # and MUST NOT detect the 2 background filter checkboxes!
+    assert len(fields_data["fields"]) == 4
+    assert fields_data["has_next"] is True
+    assert fields_data["has_submit"] is False
+    assert fields_data["has_follow_checkbox"] is True
+
+    await browser.close()
+    await pw.stop()
+

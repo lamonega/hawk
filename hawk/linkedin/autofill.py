@@ -8,28 +8,19 @@ from loguru import logger
 from playwright.async_api import Page
 
 from hawk.browser.driver import get_page
-from hawk.linkedin.operations import human_delay
+from hawk.linkedin.operations import _EASY_APPLY_ROOT_JS, human_delay
 from hawk.profile import load_profile
 from hawk.settings import get_settings
 
 
 _AUTOFILL_EVALUATE_JS = r"""
 (profileData) => {
+""" + _EASY_APPLY_ROOT_JS + r"""
     const filled = [];
     const unknown = [];
 
-    // Find modal container
-    const modal = document.querySelector('.jobs-easy-apply-modal') ||
-                  document.querySelector('div[data-test-modal-id="easy-apply-modal"]') ||
-                  document.querySelector('div[data-easy-apply-modal]') ||
-                  document.querySelector('div[role="dialog"]:has(.jobs-easy-apply-form-section__group)') ||
-                  document.querySelector('div[role="dialog"]:has(.fb-dash-form-element)') ||
-                  document.querySelector('div[role="dialog"]:has([data-test-form-element])') ||
-                  document.querySelector('div[role="dialog"]:has(button[aria-label*="Submit"], button[aria-label*="Enviar"], button[aria-label*="Continue"], button[aria-label*="Siguiente"], button[aria-label*="Review"], button[aria-label*="Revisar"])') ||
-                  document.querySelector('.artdeco-modal[role="dialog"]') ||
-                  document.querySelector('.artdeco-modal') ||
-                  document.querySelector('[role="dialog"]') ||
-                  document.body;
+    // Find form root container
+    const root = easyApplyRoot();
 
     // Helper: trigger React / Angular / LinkedIn input events
     function setInputValue(el, val) {
@@ -118,7 +109,7 @@ _AUTOFILL_EVALUATE_JS = r"""
     }
 
     // 1. Phone inputs
-    const phoneInputs = Array.from(modal.querySelectorAll('input[type="tel"], input[id*="phoneNumber"], input[name*="phone"], input[id*="phone"]'));
+    const phoneInputs = Array.from(root.querySelectorAll('input[type="tel"], input[id*="phoneNumber"], input[name*="phone"], input[id*="phone"]'));
     for (const input of phoneInputs) {
         if (!input.value || input.value.trim() === '') {
             setInputValue(input, phoneVal);
@@ -127,7 +118,7 @@ _AUTOFILL_EVALUATE_JS = r"""
     }
 
     // 2. All text, number, and email inputs
-    const allTextInputs = Array.from(modal.querySelectorAll('input[type="text"], input[type="email"], input[type="number"], input[type="url"], input:not([type])'));
+    const allTextInputs = Array.from(root.querySelectorAll('input[type="text"], input[type="email"], input[type="number"], input[type="url"], input:not([type])'));
     for (const input of allTextInputs) {
         const rawLabel = getLabel(input);
         const label = rawLabel.toLowerCase();
@@ -193,7 +184,7 @@ _AUTOFILL_EVALUATE_JS = r"""
     }
 
     // 3. Textareas (Portfolio, Links, Cover Letter, Summary)
-    const textareas = Array.from(modal.querySelectorAll('textarea'));
+    const textareas = Array.from(root.querySelectorAll('textarea'));
     for (const ta of textareas) {
         const rawLabel = getLabel(ta);
         const label = rawLabel.toLowerCase();
@@ -225,7 +216,7 @@ _AUTOFILL_EVALUATE_JS = r"""
     }
 
     // 4. Selects / Dropdowns
-    const selects = Array.from(modal.querySelectorAll('select'));
+    const selects = Array.from(root.querySelectorAll('select'));
     for (const select of selects) {
         const rawLabel = getLabel(select);
         const label = rawLabel.toLowerCase();
@@ -272,7 +263,7 @@ _AUTOFILL_EVALUATE_JS = r"""
     }
 
     // 5. Radio groups (Yes/No questions)
-    const fieldsets = Array.from(modal.querySelectorAll('fieldset, .fb-dash-form-element, div[data-test-form-builder-radio-button-form-component]'));
+    const fieldsets = Array.from(root.querySelectorAll('fieldset, .fb-dash-form-element, div[data-test-form-builder-radio-button-form-component]'));
     for (const fs of fieldsets) {
         const radios = Array.from(fs.querySelectorAll('input[type="radio"]'));
         if (radios.length === 0) continue;
@@ -333,7 +324,7 @@ _AUTOFILL_EVALUATE_JS = r"""
     }
 
     // 6. Uncheck "Follow company" / "Seguir a la empresa"
-    const checkboxes = Array.from(modal.querySelectorAll('input[type="checkbox"]'));
+    const checkboxes = Array.from(root.querySelectorAll('input[type="checkbox"]'));
     for (const cb of checkboxes) {
         const rawLabel = getLabel(cb);
         const label = rawLabel.toLowerCase();
@@ -347,24 +338,28 @@ _AUTOFILL_EVALUATE_JS = r"""
         }
     }
 
-    // 7. Detect Next/Submit buttons
-    const submitBtn = modal.querySelector('button[aria-label*="Submit application"]') ||
-                      modal.querySelector('button[aria-label*="Enviar solicitud"]') ||
-                      modal.querySelector('button[aria-label*="Enviar candidatura"]') ||
-                      Array.from(modal.querySelectorAll('button')).find(b => {
+    // 7. Detect Next/Submit buttons (searched across entire DOCUMENT)
+    const submitBtn = document.querySelector('button[aria-label*="Submit application"]') ||
+                      document.querySelector('button[aria-label*="Enviar solicitud"]') ||
+                      document.querySelector('button[aria-label*="Enviar candidatura"]') ||
+                      document.querySelector('button[aria-label*="Bewerbung senden"]') ||
+                      document.querySelector('button[aria-label*="Invia candidatura"]') ||
+                      Array.from(document.querySelectorAll('button')).find(b => {
                           const t = (b.innerText || '').toLowerCase().trim();
                           return t === 'submit' || t === 'enviar solicitud' || t === 'enviar' || t === 'enviar candidatura';
                       });
 
-    const nextBtn = modal.querySelector('button[aria-label*="Continue"]') ||
-                    modal.querySelector('button[aria-label*="Review"]') ||
-                    modal.querySelector('button[aria-label*="Next"]') ||
-                    modal.querySelector('button[aria-label*="Siguiente"]') ||
-                    modal.querySelector('button[aria-label*="Continuar"]') ||
-                    modal.querySelector('button[aria-label*="Revisar"]') ||
-                    modal.querySelector('button[aria-label*="Avançar"]') ||
-                    modal.querySelector('button.artdeco-button--primary') ||
-                    Array.from(modal.querySelectorAll('button')).find(b => {
+    const nextBtn = document.querySelector('button[aria-label*="Continue"]') ||
+                    document.querySelector('button[aria-label*="Review"]') ||
+                    document.querySelector('button[aria-label*="Next"]') ||
+                    document.querySelector('button[aria-label*="Siguiente"]') ||
+                    document.querySelector('button[aria-label*="Continuar"]') ||
+                    document.querySelector('button[aria-label*="Revisar"]') ||
+                    document.querySelector('button[aria-label*="Avançar"]') ||
+                    document.querySelector('button[aria-label*="Suivant"]') ||
+                    document.querySelector('button[aria-label*="Weiter"]') ||
+                    document.querySelector('button.artdeco-button--primary') ||
+                    Array.from(document.querySelectorAll('button')).find(b => {
                         const t = (b.innerText || '').toLowerCase().trim();
                         return t === 'next' || t === 'continue' || t === 'review' || 
                                t === 'siguiente' || t === 'continuar' || t === 'revisar' || 
@@ -505,28 +500,33 @@ async def auto_apply_full_flow(max_steps: int = 8) -> dict[str, Any]:
             }
 
         if res.get("status") == "no_advance_button":
-            # Check if modal is still open
-            modal_info = await page.evaluate("""
+            # Check if modal or form is still open
+            modal_info = await page.evaluate(
+                r"""
                 () => {
-                    const modal = document.querySelector('.jobs-easy-apply-modal') ||
-                                  document.querySelector('div[data-test-modal-id="easy-apply-modal"]') ||
-                                  document.querySelector('[role="dialog"]') ||
-                                  document.querySelector('.artdeco-modal');
-                    if (!modal) return { open: false };
+                """
+                + _EASY_APPLY_ROOT_JS
+                + r"""
+                    const root = easyApplyRoot();
+                    if (!root || (root === document.body && !document.querySelector('button[aria-label*="Submit"], button[aria-label*="Enviar"], button[aria-label*="Siguiente"], button[aria-label*="Continuar"], button[aria-label*="Review"], button[aria-label*="Revisar"]'))) {
+                        return { open: false };
+                    }
                     
-                    const submitBtn = modal.querySelector('button[aria-label*="Submit"]') ||
-                                      modal.querySelector('button[aria-label*="Enviar"]') ||
-                                      Array.from(modal.querySelectorAll('button')).find(b => {
+                    const submitBtn = document.querySelector('button[aria-label*="Submit application"]') ||
+                                      document.querySelector('button[aria-label*="Enviar solicitud"]') ||
+                                      document.querySelector('button[aria-label*="Enviar candidatura"]') ||
+                                      Array.from(document.querySelectorAll('button')).find(b => {
                                           const t = (b.innerText || '').toLowerCase().trim();
                                           return t === 'submit' || t === 'enviar solicitud' || t === 'enviar' || t === 'enviar candidatura';
                                       });
                     return {
                         open: true,
                         has_submit: !!submitBtn,
-                        text_sample: modal.innerText.slice(0, 200)
+                        text_sample: root.innerText.slice(0, 200)
                     };
                 }
-            """)
+                """
+            )
 
             if not modal_info.get("open"):
                 return {

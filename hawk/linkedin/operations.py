@@ -18,23 +18,38 @@ from hawk.settings import get_settings
 
 SCREENSHOT_DIR = Path("output/screenshots")
 
+# Shared JS helper to locate Easy Apply form root (inline card in SDUi lazy-column or dialog modal)
+_EASY_APPLY_ROOT_JS = r"""
+function easyApplyRoot() {
+    const dlg = document.querySelector('[role="dialog"]');
+    if (dlg && (dlg.querySelector('input, select, textarea, [role="radio"], button[aria-label*="Enviar"], button[aria-label*="Submit"], button[aria-label*="Continue"], button[aria-label*="Siguiente"]') || dlg.classList.contains('jobs-easy-apply-modal') || dlg.classList.contains('artdeco-modal'))) {
+        return dlg;
+    }
+    const modalOld = document.querySelector('.jobs-easy-apply-modal, div[data-test-modal-id="easy-apply-modal"], .artdeco-modal');
+    if (modalOld) return modalOld;
+
+    const col = document.querySelector('[data-testid="lazy-column"]') || document.querySelector('#lazy-column');
+    if (col) {
+        for (const card of col.children) {
+            const t = (card.innerText || '').trim().toLowerCase();
+            const isStep = /^(contact info|datos de contacto|experience|experiencia|legal|información legal|additional questions|preguntas adicionales|review|revisar|submit|confirmar|home address|dirección|education|educación|work authorization|autorización|resume|currículum|cv)/i.test(t)
+                           || /^paso \d/i.test(t)
+                           || /^step \d/i.test(t);
+            if (isStep && card.querySelector('input, select, textarea, [role="radio"]')) {
+                return card;
+            }
+        }
+    }
+    return document.body;
+}
+"""
+
 # Shared JS for detecting form fields in Easy Apply modals
-_DETECT_FIELDS_JS = """
+_DETECT_FIELDS_JS = r"""
 () => {
+""" + _EASY_APPLY_ROOT_JS + r"""
     const results = [];
-    
-    // 1. Locate modal container with robust priority
-    const modal = document.querySelector('.jobs-easy-apply-modal') ||
-                  document.querySelector('div[data-test-modal-id="easy-apply-modal"]') ||
-                  document.querySelector('div[data-easy-apply-modal]') ||
-                  document.querySelector('div[role="dialog"]:has(.jobs-easy-apply-form-section__group)') ||
-                  document.querySelector('div[role="dialog"]:has(.fb-dash-form-element)') ||
-                  document.querySelector('div[role="dialog"]:has([data-test-form-element])') ||
-                  document.querySelector('div[role="dialog"]:has(button[aria-label*="Submit"], button[aria-label*="Enviar"], button[aria-label*="Continue"], button[aria-label*="Siguiente"], button[aria-label*="Review"], button[aria-label*="Revisar"])') ||
-                  document.querySelector('.artdeco-modal[role="dialog"]') ||
-                  document.querySelector('.artdeco-modal') ||
-                  document.querySelector('[role="dialog"]') ||
-                  document.body;
+    const root = easyApplyRoot();
 
     // Helper: find clean human-readable label text for an element
     function getCleanLabel(el, idx) {
@@ -45,14 +60,14 @@ _DETECT_FIELDS_JS = """
             try {
                 const labelFor = document.querySelector(`label[for="${el.id}"]`);
                 if (labelFor && labelFor.innerText.trim()) {
-                    return labelFor.innerText.split('\\n')[0].replace(/\\s+/g, ' ').trim();
+                    return labelFor.innerText.split('\n')[0].replace(/\s+/g, ' ').trim();
                 }
             } catch(e) {}
         }
 
         // 2. Native HTML5 labels
         if (el.labels && el.labels[0] && el.labels[0].innerText.trim()) {
-            return el.labels[0].innerText.split('\\n')[0].replace(/\\s+/g, ' ').trim();
+            return el.labels[0].innerText.split('\n')[0].replace(/\s+/g, ' ').trim();
         }
 
         // 3. aria-labelledby target elements
@@ -67,19 +82,19 @@ _DETECT_FIELDS_JS = """
                 }
             }
             if (combined.trim()) {
-                return combined.split('\\n')[0].replace(/\\s+/g, ' ').trim();
+                return combined.split('\n')[0].replace(/\s+/g, ' ').trim();
             }
         }
 
         // 4. aria-label attribute
         const ariaLabel = el.getAttribute('aria-label');
         if (ariaLabel && ariaLabel.trim()) {
-            return ariaLabel.split('\\n')[0].replace(/\\s+/g, ' ').trim();
+            return ariaLabel.split('\n')[0].replace(/\s+/g, ' ').trim();
         }
 
         // 5. Parent container query
         const parent = el.closest(
-            '.jobs-easy-apply-form-section__group, .fb-dash-form-element, ' +
+            'div._85ba3e52, .jobs-easy-apply-form-section__group, .fb-dash-form-element, ' +
             'div[data-test-form-element], div[data-test-single-line-text-form-component], ' +
             'div[data-test-form-builder-text-input], div[data-test-dropdown-form-component], ' +
             'div[data-test-form-builder-radio-button-form-component], ' +
@@ -90,14 +105,14 @@ _DETECT_FIELDS_JS = """
         if (parent) {
             const labelEl = parent.querySelector('label, legend, .fb-dash-form-element__label, .artdeco-text-input--label, span.t-14, p, h3');
             if (labelEl && labelEl.innerText.trim()) {
-                return labelEl.innerText.split('\\n')[0].replace(/\\s+/g, ' ').trim();
+                return labelEl.innerText.split('\n')[0].replace(/\s+/g, ' ').trim();
             }
         }
 
         // 6. Placeholder / Title / Name fallback
         const placeholder = el.getAttribute('placeholder') || el.getAttribute('title') || el.name || '';
         if (placeholder.trim()) {
-            return placeholder.split('\\n')[0].replace(/\\s+/g, ' ').trim();
+            return placeholder.split('\n')[0].replace(/\s+/g, ' ').trim();
         }
 
         return `Field ${idx} (${el.type || el.tagName.toLowerCase()})`;
@@ -105,8 +120,8 @@ _DETECT_FIELDS_JS = """
 
     let fieldIndex = 0;
 
-    // Text inputs
-    modal.querySelectorAll('input[type="text"], input[type="email"], input[type="tel"], input[type="number"], input[type="url"], input:not([type])').forEach(el => {
+    // Text inputs (scoped to root)
+    root.querySelectorAll('input[type="text"], input[type="email"], input[type="tel"], input[type="number"], input[type="url"], input:not([type])').forEach(el => {
         fieldIndex++;
         const label = getCleanLabel(el, fieldIndex);
         const isCombobox = el.getAttribute('role') === 'combobox' || !!el.closest('[data-test-text-entity-list-form-component]');
@@ -120,8 +135,8 @@ _DETECT_FIELDS_JS = """
         });
     });
 
-    // Textareas
-    modal.querySelectorAll('textarea').forEach(el => {
+    // Textareas (scoped to root)
+    root.querySelectorAll('textarea').forEach(el => {
         fieldIndex++;
         const label = getCleanLabel(el, fieldIndex);
         results.push({
@@ -133,8 +148,8 @@ _DETECT_FIELDS_JS = """
         });
     });
 
-    // Native Selects
-    modal.querySelectorAll('select').forEach(el => {
+    // Native Selects (scoped to root)
+    root.querySelectorAll('select').forEach(el => {
         fieldIndex++;
         const label = getCleanLabel(el, fieldIndex);
         const options = Array.from(el.options).map(o => ({value: o.value, text: o.text.trim()}));
@@ -149,9 +164,9 @@ _DETECT_FIELDS_JS = """
         });
     });
 
-    // Radios (grouped by name or container)
+    // Radios (scoped to root)
     const radioGroups = {};
-    modal.querySelectorAll('input[type="radio"]').forEach(el => {
+    root.querySelectorAll('input[type="radio"]').forEach(el => {
         const parent = el.closest('fieldset, .fb-dash-form-element, div[data-test-form-builder-radio-button-form-component]') || el.parentElement;
         const groupKey = el.name || (parent ? parent.innerText.slice(0, 30) : `radio_${fieldIndex}`);
         
@@ -160,7 +175,7 @@ _DETECT_FIELDS_JS = """
             const groupLegend = (parent ? parent.querySelector('legend, label, .fb-dash-form-element__label')?.innerText : '') || getCleanLabel(el, fieldIndex);
             radioGroups[groupKey] = {
                 type: 'radio',
-                name: groupLegend.split('\\n')[0].replace(/\\s+/g, ' ').trim(),
+                name: groupLegend.split('\n')[0].replace(/\s+/g, ' ').trim(),
                 required: true,
                 options: [],
                 group_name: el.name || '',
@@ -172,14 +187,14 @@ _DETECT_FIELDS_JS = """
                             el.nextElementSibling?.innerText || el.value || '';
         radioGroups[groupKey].options.push({
             value: el.value || '',
-            text: optionLabel.split('\\n')[0].replace(/\\s+/g, ' ').trim(),
+            text: optionLabel.split('\n')[0].replace(/\s+/g, ' ').trim(),
             checked: el.checked,
         });
     });
     results.push(...Object.values(radioGroups));
 
-    // Checkboxes
-    modal.querySelectorAll('input[type="checkbox"]').forEach(el => {
+    // Checkboxes (scoped to root)
+    root.querySelectorAll('input[type="checkbox"]').forEach(el => {
         fieldIndex++;
         const label = getCleanLabel(el, fieldIndex);
         const isFollow = label.toLowerCase().includes('follow') || label.toLowerCase().includes('seguir') || (el.name && el.name.toLowerCase().includes('follow'));
@@ -193,8 +208,8 @@ _DETECT_FIELDS_JS = """
         });
     });
 
-    // File uploads
-    modal.querySelectorAll('input[type="file"]').forEach(el => {
+    // File uploads (scoped to root)
+    root.querySelectorAll('input[type="file"]').forEach(el => {
         fieldIndex++;
         const label = getCleanLabel(el, fieldIndex);
         results.push({
@@ -205,13 +220,13 @@ _DETECT_FIELDS_JS = """
         });
     });
 
-    // Buttons (English, Spanish, Portuguese, French, German, Italian)
-    const submitBtn = modal.querySelector('button[aria-label*="Submit application"]') ||
-                      modal.querySelector('button[aria-label*="Enviar solicitud"]') ||
-                      modal.querySelector('button[aria-label*="Enviar candidatura"]') ||
-                      modal.querySelector('button[aria-label*="Bewerbung senden"]') ||
-                      modal.querySelector('button[aria-label*="Invia candidatura"]') ||
-                      Array.from(modal.querySelectorAll('button')).find(b => {
+    // Buttons (English, Spanish, Portuguese, French, German, Italian) — search DOCUMENT scope
+    const submitBtn = document.querySelector('button[aria-label*="Submit application"]') ||
+                      document.querySelector('button[aria-label*="Enviar solicitud"]') ||
+                      document.querySelector('button[aria-label*="Enviar candidatura"]') ||
+                      document.querySelector('button[aria-label*="Bewerbung senden"]') ||
+                      document.querySelector('button[aria-label*="Invia candidatura"]') ||
+                      Array.from(document.querySelectorAll('button')).find(b => {
                           const t = (b.innerText || '').toLowerCase().trim();
                           return t === 'submit' || t === 'submit application' || 
                                  t === 'enviar solicitud' || t === 'enviar' || 
@@ -220,34 +235,34 @@ _DETECT_FIELDS_JS = """
                                  t === 'invia candidatura';
                       });
 
-    const nextBtn = modal.querySelector('button[aria-label*="Continue"]') ||
-                    modal.querySelector('button[aria-label*="Review"]') ||
-                    modal.querySelector('button[aria-label*="Next"]') ||
-                    modal.querySelector('button[aria-label*="Siguiente"]') ||
-                    modal.querySelector('button[aria-label*="Continuar"]') ||
-                    modal.querySelector('button[aria-label*="Revisar"]') ||
-                    modal.querySelector('button[aria-label*="Avançar"]') ||
-                    modal.querySelector('button[aria-label*="Suivant"]') ||
-                    modal.querySelector('button[aria-label*="Weiter"]') ||
-                    modal.querySelector('button.artdeco-button--primary') ||
-                    Array.from(modal.querySelectorAll('button')).find(b => {
+    const nextBtn = document.querySelector('button[aria-label*="Continue"]') ||
+                    document.querySelector('button[aria-label*="Review"]') ||
+                    document.querySelector('button[aria-label*="Next"]') ||
+                    document.querySelector('button[aria-label*="Siguiente"]') ||
+                    document.querySelector('button[aria-label*="Continuar"]') ||
+                    document.querySelector('button[aria-label*="Revisar"]') ||
+                    document.querySelector('button[aria-label*="Avançar"]') ||
+                    document.querySelector('button[aria-label*="Suivant"]') ||
+                    document.querySelector('button[aria-label*="Weiter"]') ||
+                    document.querySelector('button.artdeco-button--primary') ||
+                    Array.from(document.querySelectorAll('button')).find(b => {
                         const t = (b.innerText || '').toLowerCase().trim();
                         return t === 'next' || t === 'continue' || t === 'review' || t === 'review your application' ||
                                t === 'siguiente' || t === 'continuar' || t === 'revisar' || t === 'revisar solicitud' ||
                                t === 'avançar' || t === 'seguinte' || t === 'suivant' || t === 'weiter' || t === 'avanti';
                     });
 
-    const backBtn = modal.querySelector('button[aria-label*="Back"]') ||
-                    modal.querySelector('button[aria-label*="Previous"]') ||
-                    modal.querySelector('button[aria-label*="Volver"]') ||
-                    modal.querySelector('button[aria-label*="Anterior"]') ||
-                    Array.from(modal.querySelectorAll('button')).find(b => {
+    const backBtn = document.querySelector('button[aria-label*="Back"]') ||
+                    document.querySelector('button[aria-label*="Previous"]') ||
+                    document.querySelector('button[aria-label*="Volver"]') ||
+                    document.querySelector('button[aria-label*="Anterior"]') ||
+                    Array.from(document.querySelectorAll('button')).find(b => {
                         const t = (b.innerText || '').toLowerCase().trim();
                         return t === 'back' || t === 'previous' || t === 'volver' || t === 'anterior' || t === 'zurück' || t === 'retour';
                     });
 
     // Validation errors currently shown
-    const errors = Array.from(modal.querySelectorAll('.artdeco-inline-feedback--error, [data-test-form-element-error-messages], .fb-dash-form-element__error-message'))
+    const errors = Array.from(root.querySelectorAll('.artdeco-inline-feedback--error, [data-test-form-element-error-messages], .fb-dash-form-element__error-message, [data-testid="text-input-helper-text"], [role="alert"]'))
                         .map(e => e.innerText.trim()).filter(e => e.length > 0);
 
     return {
@@ -291,7 +306,7 @@ async def _take_debug_screenshot(step_name: str) -> str | None:
 
 
 async def _get_progress_percentage() -> int | None:
-    """Extract progress percentage from the Easy Apply modal.
+    """Extract progress percentage from the Easy Apply modal or form.
 
     Checks aria-valuenow on progressbars, percentage strings, or step counts (e.g. 'Step 2 of 4').
     """
@@ -300,18 +315,19 @@ async def _get_progress_percentage() -> int | None:
         return None
     try:
         data = await page.evaluate(
-            """
+            r"""
             () => {
-                const modal = document.querySelector('.jobs-easy-apply-modal') ||
-                              document.querySelector('div[data-test-modal-id="easy-apply-modal"]') ||
-                              document.querySelector('[role="dialog"]');
-                if (!modal) return { valuenow: null, text: '' };
+            """
+            + _EASY_APPLY_ROOT_JS
+            + r"""
+                const root = easyApplyRoot();
+                if (!root) return { valuenow: null, text: '' };
 
-                const bar = modal.querySelector('div[role="progressbar"], progress, .artdeco-completeness-meter-bar');
+                const bar = root.querySelector('div[role="progressbar"], progress, .artdeco-completeness-meter-bar');
                 const valuenow = bar ? (bar.getAttribute('aria-valuenow') || bar.value) : null;
                 return {
                     valuenow: valuenow ? parseInt(valuenow) : null,
-                    text: modal.innerText || ''
+                    text: root.innerText || ''
                 };
             }
             """
@@ -399,6 +415,9 @@ async def wait_for_jobs() -> None:
         return
 
     job_selectors = [
+        '[data-testid="lazy-column"]',
+        '#lazy-column',
+        '[componentkey^="job-card-component-ref-"]',
         'li[data-occludable-job-id]',
         'div.job-card-container',
         'div.jobs-search-results-list',
@@ -420,13 +439,15 @@ async def wait_for_jobs() -> None:
     try:
         await page.evaluate("""
             () => {
-                const list = document.querySelector('.jobs-search-results-list') ||
+                const list = document.querySelector('[data-testid="lazy-column"]') ||
+                             document.querySelector('#lazy-column') ||
+                             document.querySelector('.jobs-search-results-list') ||
                              document.querySelector('.scaffold-layout__list') ||
-                             document.querySelector('div.scaffold-layout__list-container') ||
-                             window;
+                             document.querySelector('div.scaffold-layout__list-container');
                 if (list && list.scrollBy) {
                     list.scrollBy(0, 600);
                 }
+                window.scrollBy(0, 600);
             }
         """)
         await asyncio.sleep(1.0)
@@ -438,7 +459,7 @@ async def extract_jobs_list() -> str:
     """Extract job cards from a LinkedIn search results page.
 
     Returns JSON array of job summaries. Automatically scrolls to load virtualized
-    cards and applies multi-strategy parsing for modern and legacy LinkedIn DOMs.
+    cards and applies modern SDUi 2026 and legacy LinkedIn DOM parsing.
     """
     page = get_page()
     if page is None:
@@ -451,14 +472,15 @@ async def extract_jobs_list() -> str:
         try:
             await page.evaluate("""
                 () => {
-                    const list = document.querySelector('.jobs-search-results-list') ||
+                    const list = document.querySelector('[data-testid="lazy-column"]') ||
+                                 document.querySelector('#lazy-column') ||
+                                 document.querySelector('.jobs-search-results-list') ||
                                  document.querySelector('.scaffold-layout__list') ||
                                  document.querySelector('div.scaffold-layout__list-container');
-                    if (list) {
-                        list.scrollTop += 500;
-                    } else {
-                        window.scrollBy(0, 400);
+                    if (list && list.scrollBy) {
+                        list.scrollBy(0, 500);
                     }
+                    window.scrollBy(0, 500);
                 }
             """)
             await asyncio.sleep(0.5)
@@ -472,31 +494,6 @@ async def extract_jobs_list() -> str:
                 () => {
                     const seen = new Set();
                     const jobs = [];
-
-                    // Strategy 1: Comprehensive job card containers
-                    const cardSelectors = [
-                        'li[data-occludable-job-id]',
-                        'li.jobs-search-results__list-item',
-                        'li.scaffold-layout__list-item',
-                        'div.job-card-container',
-                        'div.job-card-list',
-                        'div[data-job-id]',
-                        'div[data-view-name="job-card"]',
-                        'ul.jobs-search__results-list > li',
-                        '.scaffold-layout__list-container > li',
-                        '.base-card',
-                        'div[data-display-contents="true"]:has(a[href*="/jobs/view/"])',
-                        'div[data-display-contents="true"]:has(a[href*="currentJobId="])',
-                    ];
-
-                    let rawCards = [];
-                    for (const sel of cardSelectors) {
-                        const found = document.querySelectorAll(sel);
-                        if (found.length > 0) {
-                            rawCards = Array.from(found);
-                            break;
-                        }
-                    }
 
                     function cleanRole(text) {
                         if (!text) return '';
@@ -514,9 +511,95 @@ async def extract_jobs_list() -> str:
                             .trim();
                     }
 
-                    if (rawCards.length > 0) {
+                    // 1. SDUi 2026 cards with componentkey
+                    const cardEls = document.querySelectorAll('[componentkey^="job-card-component-ref-"]');
+                    for (const el of cardEls) {
+                        const ck = el.getAttribute('componentkey') || '';
+                        const m = ck.match(/job-card-component-ref-(\d+)/);
+                        if (!m) continue;
+                        const jobId = m[1];
+                        if (seen.has(jobId)) continue;
+                        seen.add(jobId);
+
+                        // Card container: the element itself or closest ancestor card
+                        const card = el.closest('div._1e5cedba') || el.closest('div[role="button"]') || el;
+
+                        // Role / Title: span[aria-hidden="true"] or span._4da622bc
+                        let role = '';
+                        const hiddenSpan = card.querySelector('span[aria-hidden="true"]');
+                        if (hiddenSpan && hiddenSpan.innerText.trim()) {
+                            role = cleanRole(hiddenSpan.innerText);
+                        }
+                        if (!role) {
+                            const vhSpan = card.querySelector('span._4da622bc') || card.querySelector('p');
+                            if (vhSpan) role = cleanRole(vhSpan.innerText);
+                        }
+
+                        // Company & Location in div.ced15e10
+                        let company = '';
+                        let location = '';
+                        const infoDiv = card.querySelector('div.ced15e10') || card;
+                        const pList = infoDiv.querySelectorAll('p');
+                        if (pList.length >= 2) {
+                            company = pList[0].innerText.split('\n')[0].replace(/\s+/g, ' ').trim();
+                            location = pList[1].innerText.split('\n')[0].replace(/\s+/g, ' ').trim();
+                        } else if (pList.length === 1) {
+                            company = pList[0].innerText.split('\n')[0].replace(/\s+/g, ' ').trim();
+                        }
+
+                        // Easy apply & already applied
+                        const cardText = card.innerText.toLowerCase();
+                        const easyApply = cardText.includes('solicitud sencilla') ||
+                                          cardText.includes('easy apply') ||
+                                          cardText.includes('candidatura sencilla') ||
+                                          cardText.includes('candidatura fácil') ||
+                                          !!card.querySelector('svg#linkedin-bug-small');
+
+                        const alreadyApplied = cardText.includes('solicitado') ||
+                                               cardText.includes('applied') ||
+                                               cardText.includes('candidatura enviada') ||
+                                               cardText.includes('ya has solicitado');
+
+                        if (role) {
+                            jobs.push({
+                                job_id: jobId,
+                                role: role,
+                                company: company,
+                                location: location,
+                                link: `https://www.linkedin.com/jobs/view/${jobId}/`,
+                                easy_apply: easyApply,
+                                already_applied: alreadyApplied,
+                            });
+                        }
+                    }
+
+                    // 2. Fallback: standard and legacy card containers if no SDUi cards found
+                    if (jobs.length === 0) {
+                        const cardSelectors = [
+                            'li[data-occludable-job-id]',
+                            'li.jobs-search-results__list-item',
+                            'li.scaffold-layout__list-item',
+                            'div.job-card-container',
+                            'div.job-card-list',
+                            'div[data-job-id]',
+                            'div[data-view-name="job-card"]',
+                            'ul.jobs-search__results-list > li',
+                            '.scaffold-layout__list-container > li',
+                            '.base-card',
+                            'div[data-display-contents="true"]:has(a[href*="/jobs/view/"])',
+                            'div[data-display-contents="true"]:has(a[href*="currentJobId="])',
+                        ];
+
+                        let rawCards = [];
+                        for (const sel of cardSelectors) {
+                            const found = document.querySelectorAll(sel);
+                            if (found.length > 0) {
+                                rawCards = Array.from(found);
+                                break;
+                            }
+                        }
+
                         for (const card of rawCards) {
-                            // Extract Job ID
                             let jobId = card.getAttribute('data-job-id') ||
                                         card.getAttribute('data-occludable-job-id') ||
                                         '';
@@ -540,7 +623,6 @@ async def extract_jobs_list() -> str:
                                 }
                             }
 
-                            // If still no jobId, check data-entity-urn
                             if (!jobId) {
                                 const urn = card.getAttribute('data-entity-urn') || '';
                                 const m = urn.match(/jobPosting:(\d+)/);
@@ -554,7 +636,6 @@ async def extract_jobs_list() -> str:
                             if (seen.has(jobId)) continue;
                             seen.add(jobId);
 
-                            // Extract Role / Title
                             let role = '';
                             const titleEl = card.querySelector('.job-card-list__title--link') ||
                                             card.querySelector('.job-card-list__title') ||
@@ -575,7 +656,6 @@ async def extract_jobs_list() -> str:
                                 role = lines[0] || '';
                             }
 
-                            // Extract Company
                             let company = '';
                             const companyEl = card.querySelector('.job-card-container__primary-description') ||
                                               card.querySelector('.artdeco-entity-lockup__subtitle') ||
@@ -588,7 +668,6 @@ async def extract_jobs_list() -> str:
                                 company = companyEl.innerText.split('\n')[0].replace(/\s+/g, ' ').trim();
                             }
 
-                            // Extract Location
                             let location = '';
                             const locationEl = card.querySelector('.job-card-container__metadata-item') ||
                                                card.querySelector('.artdeco-entity-lockup__caption') ||
@@ -635,7 +714,7 @@ async def extract_jobs_list() -> str:
                         }
                     }
 
-                    // Strategy 2: Direct links fallback
+                    // 3. Direct links fallback
                     if (jobs.length === 0) {
                         const links = Array.from(document.querySelectorAll('a[href*="/jobs/view/"], a[href*="currentJobId="]'));
                         for (const link of links) {
@@ -689,11 +768,14 @@ async def extract_job_details() -> str:
     try:
         await page.evaluate("""
             () => {
-                const showMoreBtn = document.querySelector('button.jobs-description__footer-button') ||
-                                    document.querySelector('button[aria-label*="Show more"]') ||
-                                    document.querySelector('button[aria-label*="Ver más"]') ||
-                                    document.querySelector('button.show-more-less-html__button') ||
-                                    document.querySelector('.artdeco-card__actions button');
+                const showMoreBtn = Array.from(document.querySelectorAll('button')).find(b => {
+                    const t = (b.innerText || '').toLowerCase().trim();
+                    return (t.includes('ver más') || t.includes('show more') || t === 'más') && !t.includes('ver menos');
+                }) || document.querySelector('button.jobs-description__footer-button') ||
+                      document.querySelector('button[aria-label*="Show more"]') ||
+                      document.querySelector('button[aria-label*="Ver más"]') ||
+                      document.querySelector('button.show-more-less-html__button') ||
+                      document.querySelector('.artdeco-card__actions button');
                 if (showMoreBtn) {
                     showMoreBtn.click();
                 }
@@ -707,6 +789,9 @@ async def extract_job_details() -> str:
         job = await page.evaluate(
             r"""
             () => {
+                const col = document.querySelector('[data-testid="lazy-column"]') || document.querySelector('#lazy-column');
+                const topCard = col ? col.firstElementChild : document.body;
+
                 // 1. Title / Role
                 let title = '';
                 const titleEl = document.querySelector('h1.job-details-jobs-unified-top-card__job-title') ||
@@ -715,63 +800,113 @@ async def extract_job_details() -> str:
                                 document.querySelector('div.job-details-jobs-unified-top-card__title-container h1') ||
                                 document.querySelector('.jobs-unified-top-card__job-title') ||
                                 document.querySelector('h1.top-card-layout__title') ||
-                                document.querySelector('h1.topcard__title') ||
-                                document.querySelector('h1.t-24') ||
-                                document.querySelector('h2.t-24') ||
-                                document.querySelector('div[data-view-name="job-details"] h1') ||
-                                document.querySelector('h1');
+                                document.querySelector('p.d3e5c957._062c687f') ||
+                                document.querySelector('p._062c687f') ||
+                                (topCard && topCard !== document.body ? topCard.querySelector('p.d3e5c957, p._062c687f') : null);
                 if (titleEl) {
                     title = titleEl.innerText.split('\n')[0].replace(/\s+/g, ' ').trim();
                 }
 
+                if (!title && topCard && topCard !== document.body) {
+                    const companyLink = topCard.querySelector('a[href*="/company/"]');
+                    if (companyLink) {
+                        const pEls = Array.from(topCard.querySelectorAll('p'));
+                        const compP = companyLink.closest('p') || companyLink.parentElement;
+                        const compIdx = pEls.indexOf(compP);
+                        if (compIdx >= 0 && compIdx + 1 < pEls.length) {
+                            title = pEls[compIdx + 1].innerText.split('\n')[0].replace(/\s+/g, ' ').trim();
+                        }
+                    }
+                }
+
+                if (!title || title.length < 2) {
+                    const h1 = document.querySelector('h1');
+                    if (h1) title = h1.innerText.split('\n')[0].replace(/\s+/g, ' ').trim();
+                }
+
+                if (!title || title.length < 2) {
+                    title = (document.title || '').split(' | ')[0].split(' - ')[0].trim();
+                }
+
                 // 2. Company
                 let company = '';
-                const companyEl = document.querySelector('div.job-details-jobs-unified-top-card__company-name a') ||
-                                  document.querySelector('span.job-details-jobs-unified-top-card__company-name') ||
-                                  document.querySelector('div.job-details-jobs-unified-top-card__company-name') ||
-                                  document.querySelector('.job-details-jobs-unified-top-card__company-name') ||
-                                  document.querySelector('.jobs-unified-top-card__company-name a') ||
-                                  document.querySelector('.jobs-unified-top-card__company-name') ||
-                                  document.querySelector('a.topcard__org-name-link') ||
-                                  document.querySelector('.artdeco-entity-lockup__subtitle a') ||
-                                  document.querySelector('.artdeco-entity-lockup__subtitle') ||
-                                  document.querySelector('a[href*="/company/"]');
-                if (companyEl) {
-                    company = companyEl.innerText.split('\n')[0].replace(/\s+/g, ' ').trim();
+                const compLink = document.querySelector('a[href*="/company/"]') ||
+                                 document.querySelector('div.job-details-jobs-unified-top-card__company-name a') ||
+                                 document.querySelector('span.job-details-jobs-unified-top-card__company-name') ||
+                                 document.querySelector('div.job-details-jobs-unified-top-card__company-name');
+                if (compLink) {
+                    company = compLink.innerText.split('\n')[0].replace(/\s+/g, ' ').trim();
                 }
 
                 // 3. Location & Workplace Type
                 let location = '';
                 let workplaceType = '';
-                const locEl = document.querySelector('.job-details-jobs-unified-top-card__primary-description-container') ||
-                              document.querySelector('span.job-details-jobs-unified-top-card__bullet') ||
-                              document.querySelector('.jobs-unified-top-card__bullet') ||
-                              document.querySelector('span.topcard__flavor--bullet') ||
-                              document.querySelector('.artdeco-entity-lockup__caption') ||
-                              document.querySelector('span.main-job-card__location');
-                if (locEl) {
-                    location = locEl.innerText.split('\n')[0].replace(/\s+/g, ' ').trim();
+
+                // Location paragraph matching "hace \d+" or city format
+                if (topCard) {
+                    const locP = Array.from(topCard.querySelectorAll('p')).find(p => {
+                        const t = p.innerText;
+                        return /\b(hace \d+|ago \d+|días?|horas?|days?|hours?)\b/i.test(t) ||
+                               (t.includes(',') && !t.includes('http') && t.length < 150);
+                    });
+                    if (locP) {
+                        location = locP.innerText
+                            .replace(/\s*·\s*hace\s+[^·]+/gi, '')
+                            .replace(/\s*·\s*\d+\s*(?:solicitudes|applicants|candidaturas).*/gi, '')
+                            .replace(/\s*·\s*ago\s+[^·]+/gi, '')
+                            .split('\n')[0]
+                            .replace(/\s+/g, ' ')
+                            .trim();
+                    }
+                }
+                if (!location) {
+                    const locEl = document.querySelector('.job-details-jobs-unified-top-card__primary-description-container') ||
+                                  document.querySelector('span.job-details-jobs-unified-top-card__bullet') ||
+                                  document.querySelector('.jobs-unified-top-card__bullet') ||
+                                  document.querySelector('span.topcard__flavor--bullet');
+                    if (locEl) {
+                        location = locEl.innerText.split('\n')[0].replace(/\s+/g, ' ').trim();
+                    }
                 }
 
-                const wpEl = document.querySelector('span.job-details-jobs-unified-top-card__workplace-type') ||
-                             document.querySelector('span.jobs-unified-top-card__workplace-type');
+                // Workplace type chip
+                const wpEl = Array.from(document.querySelectorAll('span, a')).find(el => 
+                    /^(presencial|en remoto|híbrido|on-site|remote|hybrid)$/i.test(el.textContent.trim())
+                ) || document.querySelector('span.job-details-jobs-unified-top-card__workplace-type') ||
+                     document.querySelector('span.jobs-unified-top-card__workplace-type');
                 if (wpEl) {
-                    workplaceType = wpEl.innerText.trim();
+                    workplaceType = wpEl.textContent.trim();
+                } else if (location.includes('(') && location.includes(')')) {
+                    const m = location.match(/\(([^)]+)\)/);
+                    if (m) workplaceType = m[1].trim();
                 }
 
-                // 4. Full Description
+                // 4. Description
                 let description = '';
-                const descEl = document.querySelector('#job-details') ||
-                               document.querySelector('.jobs-description__content') ||
-                               document.querySelector('.jobs-box__html-content') ||
-                               document.querySelector('.jobs-description') ||
-                               document.querySelector('.show-more-less-html__markup') ||
-                               document.querySelector('article.jobs-description__container') ||
-                               document.querySelector('.description__text') ||
-                               document.querySelector('article');
-                if (descEl) {
-                    description = descEl.innerText.trim();
-                } else {
+                const h2 = Array.from(document.querySelectorAll('h2')).find(h => 
+                    /acerca del empleo|about the job|sobre la vacante|job description/i.test(h.innerText)
+                );
+                if (h2 && h2.parentElement) {
+                    const container = h2.parentElement;
+                    const lines = (container.innerText || '').split('\n');
+                    description = lines.slice(1).join('\n')
+                        .replace(/(?:ver más|ver menos|show more|show less)\s*$/i, '')
+                        .trim();
+                }
+                if (!description || description.length < 50) {
+                    const descEl = document.querySelector('#job-details') ||
+                                   document.querySelector('.jobs-description__content') ||
+                                   document.querySelector('.jobs-box__html-content') ||
+                                   document.querySelector('.jobs-description') ||
+                                   document.querySelector('.show-more-less-html__markup') ||
+                                   document.querySelector('article.jobs-description__container') ||
+                                   document.querySelector('.description__text') ||
+                                   document.querySelector('article');
+                    if (descEl) {
+                        description = descEl.innerText.trim();
+                    }
+                }
+                if (!description || description.length < 50) {
                     const pageText = document.body ? document.body.innerText : '';
                     const match = pageText.match(/(?:Acerca del empleo|About the job|Sobre la vacante|Description)[\s\S]{50,6000}/i);
                     if (match) {
@@ -804,10 +939,11 @@ async def extract_job_details() -> str:
                                        btnText.includes('applied') || btnText.includes('solicitado') || btnText.includes('enviada');
 
                 // 6. Recruiter info
-                const recruiterEl = document.querySelector('.jobs-poster__name') ||
+                const recruiterEl = document.querySelector('a[data-tracking-control-name*="hirer"]') ||
+                                    document.querySelector('a[href*="/in/"][data-tracking-control-name]') ||
+                                    document.querySelector('.jobs-poster__name') ||
                                     document.querySelector('.hirer-card__hirer-information') ||
-                                    document.querySelector('.jobs-search__organizer-link') ||
-                                    document.querySelector('a[data-tracking-control-name="public_jobs_jobs-search-result-1"]');
+                                    document.querySelector('.jobs-search__organizer-link');
 
                 return {
                     role: title,
@@ -930,17 +1066,18 @@ async def detect_form_fields() -> str:
         fields = await page.evaluate(_DETECT_FIELDS_JS)
 
         # Add follow checkbox detection
-        follow_result = await page.evaluate("""
+        follow_result = await page.evaluate(
+            r"""
             () => {
-                const modal = document.querySelector('.jobs-easy-apply-modal') ||
-                              document.querySelector('div[data-test-modal-id="easy-apply-modal"]') ||
-                              document.querySelector('[role="dialog"]') ||
-                              document.querySelector('.artdeco-modal');
-                if (!modal) return {has_follow_checkbox: false, follow_checked: false};
-                const followCheckbox = modal.querySelector('input[name="followCompany"]') ||
-                                       modal.querySelector('[data-follow-company]') ||
-                                       Array.from(modal.querySelectorAll('input[type="checkbox"]')).find(cb => {
-                                           const l = (cb.closest('label')?.innerText || '').toLowerCase();
+            """
+            + _EASY_APPLY_ROOT_JS
+            + r"""
+                const root = easyApplyRoot();
+                if (!root) return {has_follow_checkbox: false, follow_checked: false};
+                const followCheckbox = root.querySelector('input[name="followCompany"]') ||
+                                       root.querySelector('[data-follow-company]') ||
+                                       Array.from(root.querySelectorAll('input[type="checkbox"]')).find(cb => {
+                                           const l = (cb.closest('label')?.innerText || cb.getAttribute('aria-label') || '').toLowerCase();
                                            return l.includes('seguir') || l.includes('follow');
                                        });
                 return {
@@ -948,7 +1085,8 @@ async def detect_form_fields() -> str:
                     follow_checked: followCheckbox ? followCheckbox.checked : false,
                 };
             }
-        """)
+            """
+        )
         fields.update(follow_result)
         fields["autofill_filled"] = autofill_res.get("filled", [])
         fields["autofill_unknown"] = autofill_res.get("unknown_required", [])
@@ -1009,31 +1147,23 @@ async def unfollow_company() -> str:
 
     try:
         result = await page.evaluate(
-            """
+            r"""
             () => {
-                const modal = document.querySelector('.jobs-easy-apply-modal') ||
-                              document.querySelector('div[data-test-modal-id="easy-apply-modal"]') ||
-                              document.querySelector('[role="dialog"]') ||
-                              document.querySelector('.artdeco-modal');
-                if (!modal) return 'no_modal';
+            """
+            + _EASY_APPLY_ROOT_JS
+            + r"""
+                const root = easyApplyRoot();
+                if (!root) return 'no_modal';
 
-                const selectors = [
-                    'input[name="followCompany"]',
-                    '[data-follow-company]',
-                    'input[type="checkbox"]',
-                ];
-
-                for (const sel of selectors) {
-                    const checkboxes = modal.querySelectorAll(sel);
-                    for (const cb of checkboxes) {
-                        const label = cb.closest('label')?.innerText || cb.getAttribute('aria-label') || '';
-                        const labelLower = label.toLowerCase();
-                        if ((labelLower.includes('follow') || labelLower.includes('seguir')) && cb.checked) {
-                            cb.click();
-                            cb.checked = false;
-                            cb.dispatchEvent(new Event('change', { bubbles: true }));
-                            return 'unchecked';
-                        }
+                const checkboxes = root.querySelectorAll('input[name="followCompany"], [data-follow-company], input[type="checkbox"]');
+                for (const cb of checkboxes) {
+                    const label = cb.closest('label')?.innerText || cb.getAttribute('aria-label') || '';
+                    const labelLower = label.toLowerCase();
+                    if ((labelLower.includes('follow') || labelLower.includes('seguir')) && cb.checked) {
+                        cb.click();
+                        cb.checked = false;
+                        cb.dispatchEvent(new Event('change', { bubbles: true }));
+                        return 'unchecked';
                     }
                 }
                 return 'not_found';
