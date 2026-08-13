@@ -447,39 +447,80 @@ async def extract_job_details() -> str:
 
     try:
         job = await page.evaluate(
-            """
+            r"""
             () => {
-                const title = document.querySelector('h1.top-card-layout__title') ||
-                              document.querySelector('h1.topcard__title') ||
-                              document.querySelector('h1.job-details-jobs-unified-top-card__job-title') ||
-                              document.querySelector('h1.t-24') ||
-                              document.querySelector('h1');
+                // 1. Title
+                let title = '';
+                const titleEl = document.querySelector('h1.top-card-layout__title') ||
+                                document.querySelector('h1.topcard__title') ||
+                                document.querySelector('h1.job-details-jobs-unified-top-card__job-title') ||
+                                document.querySelector('.jobs-unified-top-card__job-title') ||
+                                document.querySelector('h1.t-24') ||
+                                document.querySelector('h2.t-24') ||
+                                document.querySelector('h1');
+                if (titleEl) {
+                    title = titleEl.innerText.trim();
+                }
 
-                const company = document.querySelector('a.topcard__org-name-link') ||
-                                document.querySelector('span.topcard__flavor:not(.topcard__flavor--bullet)') ||
-                                document.querySelector('.job-details-jobs-unified-top-card__company-name a') ||
-                                document.querySelector('.job-details-jobs-unified-top-card__company-name') ||
-                                document.querySelector('.artdeco-entity-lockup__subtitle a') ||
-                                document.querySelector('.artdeco-entity-lockup__subtitle');
+                // 2. Company
+                let company = '';
+                const companyEl = document.querySelector('a.topcard__org-name-link') ||
+                                  document.querySelector('span.topcard__flavor:not(.topcard__flavor--bullet)') ||
+                                  document.querySelector('.job-details-jobs-unified-top-card__company-name a') ||
+                                  document.querySelector('.job-details-jobs-unified-top-card__company-name') ||
+                                  document.querySelector('.jobs-unified-top-card__company-name a') ||
+                                  document.querySelector('.jobs-unified-top-card__company-name') ||
+                                  document.querySelector('.artdeco-entity-lockup__subtitle a') ||
+                                  document.querySelector('.artdeco-entity-lockup__subtitle') ||
+                                  document.querySelector('a[href*="/company/"]');
+                if (companyEl) {
+                    company = companyEl.innerText.trim().split('\n')[0].trim();
+                }
 
-                const location = document.querySelector('span.topcard__flavor--bullet') ||
-                                 document.querySelector('.job-details-jobs-unified-top-card__bullet') ||
-                                 document.querySelector('.job-details-jobs-unified-top-card__primary-description') ||
-                                 document.querySelector('.artdeco-entity-lockup__caption') ||
-                                 document.querySelector('span.main-job-card__location');
+                // 3. Location
+                let location = '';
+                const locationEl = document.querySelector('span.topcard__flavor--bullet') ||
+                                   document.querySelector('.job-details-jobs-unified-top-card__bullet') ||
+                                   document.querySelector('.jobs-unified-top-card__bullet') ||
+                                   document.querySelector('.job-details-jobs-unified-top-card__primary-description') ||
+                                   document.querySelector('.artdeco-entity-lockup__caption') ||
+                                   document.querySelector('span.main-job-card__location');
+                if (locationEl) {
+                    location = locationEl.innerText.trim().split('\n')[0].trim();
+                }
 
+                // 4. Description
+                let description = '';
                 const descEl = document.querySelector('.jobs-description__content') ||
+                               document.querySelector('.jobs-description') ||
                                document.querySelector('.description__text') ||
                                document.querySelector('.show-more-less-html__markup') ||
-                               document.querySelector('.jobs-box__html-content');
-                const description = descEl ? descEl.innerText.trim() : '';
+                               document.querySelector('.jobs-box__html-content') ||
+                               document.querySelector('#job-details') ||
+                               document.querySelector('article');
+                if (descEl) {
+                    description = descEl.innerText.trim();
+                } else {
+                    // Fallback to text matching "Acerca del empleo" / "About the job"
+                    const pageText = document.body ? document.body.innerText : '';
+                    const match = pageText.match(/(?:Acerca del empleo|About the job|Summary)[\s\S]{50,4000}/i);
+                    if (match) {
+                        description = match[0].trim();
+                    }
+                }
 
+                // 5. Easy Apply button detection
                 const easyApplyBtn = document.querySelector('button.jobs-apply-button') ||
                                      document.querySelector('button.apply-button--easy-apply') ||
                                      document.querySelector('button[aria-label*="Easy Apply"]') ||
-                                     document.querySelector('button[aria-label*="Solicitud sencilla"]');
+                                     document.querySelector('button[aria-label*="Solicitud sencilla"]') ||
+                                     document.querySelector('button[data-is-easy-apply="true"]') ||
+                                     Array.from(document.querySelectorAll('button')).find(b => {
+                                         const t = (b.innerText || '').toLowerCase();
+                                         return t.includes('solicitud sencilla') || t.includes('easy apply');
+                                     });
 
-                // Detect "already applied" state on the job page
+                // Detect "already applied" state
                 const appliedBanner = document.querySelector('.jobs-apply-button--disabled') ||
                                       document.querySelector('.artdeco-inline-feedback--success');
                 const alreadyApplied = !!(appliedBanner) ||
@@ -490,9 +531,9 @@ async def extract_job_details() -> str:
                                   document.querySelector('a[data-tracking-control-name="public_jobs_jobs-search-result-1"]');
 
                 return {
-                    role: title ? title.innerText.trim() : '',
-                    company: company ? company.innerText.trim() : '',
-                    location: location ? location.innerText.trim().split('\\n')[0] : '',
+                    role: title,
+                    company: company,
+                    location: location,
                     description: description,
                     easy_apply: !!easyApplyBtn,
                     already_applied: !!alreadyApplied,
