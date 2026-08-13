@@ -290,6 +290,11 @@ def check_linkedin_session() -> str:
         if "login" in url or "authwall" in url:
             return "not_logged_in"
 
+        # LinkedIn sometimes shows a checkpoint/challenge page
+        if "checkpoint" in url or "challenge" in url:
+            logger.warning("LinkedIn checkpoint/challenge detected at: {}", url)
+            return "not_logged_in"
+
         feed = page.query_selector(".feed-identity-module")
         if feed:
             save_session()
@@ -302,6 +307,9 @@ def check_linkedin_session() -> str:
         return "not_logged_in"
     except Exception as e:
         logger.error("Session check failed: {}", e)
+        # Navigation interrupted often means a redirect to checkpoint
+        if "checkpoint" in str(e) or "challenge" in str(e):
+            return "not_logged_in"
         return f"error: {e}"
 
 
