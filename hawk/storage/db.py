@@ -4,18 +4,20 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from loguru import logger
+
+from hawk.settings import PROJECT_ROOT
 
 DB_NAME = "hawk.db"
 
 
 def get_db_path(output_dir: Path | None = None) -> Path:
     if output_dir is None:
-        output_dir = Path("output")
+        output_dir = PROJECT_ROOT / "output"
     output_dir.mkdir(parents=True, exist_ok=True)
     return output_dir / DB_NAME
 
@@ -105,7 +107,7 @@ def insert_job(
                 description,
                 summary,
                 recruiter_link,
-                datetime.utcnow().isoformat(),
+                datetime.now(timezone.utc).isoformat(),
                 source,
             ),
         )
@@ -124,10 +126,11 @@ def insert_application(
     dry_run: bool = True,
     metadata: dict[str, Any] | None = None,
     output_dir: Path | None = None,
-) -> None:
+) -> bool:
+    """Insert an application. Returns True if inserted, False if duplicate."""
     conn = get_connection(output_dir)
     try:
-        conn.execute(
+        cursor = conn.execute(
             """
             INSERT OR IGNORE INTO applications (job_id, status, score, score_reasoning, resume_path, cover_letter_path, applied_at, dry_run, metadata)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -139,18 +142,19 @@ def insert_application(
                 score_reasoning,
                 resume_path,
                 cover_letter_path,
-                datetime.utcnow().isoformat(),
+                datetime.now(timezone.utc).isoformat(),
                 1 if dry_run else 0,
                 json.dumps(metadata or {}),
             ),
         )
         conn.commit()
+        return cursor.rowcount > 0
     finally:
         conn.close()
 
 
 def get_today_application_count(output_dir: Path | None = None) -> int:
-    today = datetime.utcnow().strftime("%Y-%m-%d")
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     conn = get_connection(output_dir)
     try:
         row = conn.execute(
@@ -162,7 +166,7 @@ def get_today_application_count(output_dir: Path | None = None) -> int:
 
 
 def increment_daily_count(output_dir: Path | None = None) -> int:
-    today = datetime.utcnow().strftime("%Y-%m-%d")
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     conn = get_connection(output_dir)
     try:
         conn.execute(

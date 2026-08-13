@@ -154,6 +154,8 @@ def mark_profile_complete(profile: UserProfile, path: Path | None = None) -> Use
 
 def get_profile_value(profile: UserProfile, key: str) -> str:
     """Get a value from the profile using dot notation (e.g. 'personal.first_name')."""
+    from pydantic import BaseModel
+
     parts = key.split(".")
     obj: Any = profile
     for part in parts:
@@ -163,6 +165,9 @@ def get_profile_value(profile: UserProfile, key: str) -> str:
             obj = obj[part]
         else:
             return ""
+    # Don't return model repr or complex types — only primitives
+    if isinstance(obj, BaseModel) or isinstance(obj, (list, dict)):
+        return ""
     return str(obj) if obj is not None else ""
 
 
@@ -264,12 +269,20 @@ _FIELD_RULES: list[tuple[str, str]] = [
 
 def match_field(question: str, profile: UserProfile) -> str | None:
     """Try to match a LinkedIn form question to a profile value."""
+    import difflib
+
     q = question.lower().strip()
 
-    # Check common_answers cache first
+    # Check common_answers cache — exact match first, then fuzzy
     for pattern, answer in profile.common_answers.items():
-        if pattern.lower() in q or q in pattern.lower():
-            logger.debug("Matched common answer: '{}' -> '{}'", pattern, answer)
+        p = pattern.lower().strip()
+        if p == q:
+            logger.debug("Exact common answer match: '{}' -> '{}'", pattern, answer)
+            return answer
+        # Fuzzy match with high threshold to avoid false positives
+        ratio = difflib.SequenceMatcher(None, p, q).ratio()
+        if ratio > 0.85:
+            logger.debug("Fuzzy common answer match ({:.0%}): '{}' -> '{}'", ratio, pattern, answer)
             return answer
 
     # Try field rules

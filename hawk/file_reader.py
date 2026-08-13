@@ -6,6 +6,8 @@ from pathlib import Path
 
 from loguru import logger
 
+MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
+
 
 def read_file(file_path: str) -> str:
     """Read a file and return its content as text.
@@ -18,6 +20,8 @@ def read_file(file_path: str) -> str:
     Returns:
         The file content as a string, or an error message.
     """
+    from hawk.settings import PROJECT_ROOT
+
     path = Path(file_path).expanduser().resolve()
 
     if not path.exists():
@@ -25,6 +29,22 @@ def read_file(file_path: str) -> str:
 
     if not path.is_file():
         return f"error: Not a file: {path}"
+
+    # Path traversal protection: warn if outside project or home
+    try:
+        home = Path.home().resolve()
+        if not str(path).startswith(str(home)) and not str(path).startswith(str(PROJECT_ROOT)):
+            logger.warning("Reading file outside home/project: {}", path)
+    except Exception:
+        pass
+
+    # File size limit
+    try:
+        size = path.stat().st_size
+        if size > MAX_FILE_SIZE:
+            return f"error: File too large ({size / 1024 / 1024:.1f}MB, max {MAX_FILE_SIZE / 1024 / 1024:.0f}MB)"
+    except Exception as e:
+        return f"error: Cannot stat file: {e}"
 
     suffix = path.suffix.lower()
 

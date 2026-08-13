@@ -17,6 +17,104 @@ from hawk.settings import get_settings
 
 SCREENSHOT_DIR = Path("output/screenshots")
 
+# Shared JS for detecting form fields in Easy Apply modals
+_DETECT_FIELDS_JS = """
+() => {
+    const results = [];
+    const modal = document.querySelector('.jobs-easy-apply-modal') ||
+                  document.querySelector('[role="dialog"]') ||
+                  document.querySelector('.artdeco-modal');
+
+    if (!modal) return {fields: [], has_submit: false, has_next: false, total_fields: 0};
+
+    // Text inputs
+    modal.querySelectorAll('input[type="text"], input[type="email"], input[type="tel"], input[type="number"], input[type="url"], input:not([type])').forEach(el => {
+        const label = el.getAttribute('aria-label') ||
+                      el.closest('.jobs-easy-apply-form-section__group')?.querySelector('label')?.innerText ||
+                      el.getAttribute('name') || '';
+        results.push({
+            type: 'text',
+            name: label.trim(),
+            required: el.required || el.getAttribute('aria-required') === 'true',
+            value: el.value || '',
+            input_type: el.type || 'text',
+        });
+    });
+
+    // Selects
+    modal.querySelectorAll('select').forEach(el => {
+        const label = el.getAttribute('aria-label') ||
+                      el.closest('.jobs-easy-apply-form-section__group')?.querySelector('label')?.innerText ||
+                      el.getAttribute('name') || '';
+        const options = Array.from(el.options).map(o => ({value: o.value, text: o.text}));
+        results.push({
+            type: 'select',
+            name: label.trim(),
+            required: el.required || el.getAttribute('aria-required') === 'true',
+            value: el.value,
+            options: options,
+        });
+    });
+
+    // Radios (grouped by name)
+    const radioGroups = {};
+    modal.querySelectorAll('input[type="radio"]').forEach(el => {
+        const name = el.getAttribute('name') || 'unknown';
+        if (!radioGroups[name]) {
+            const label = el.closest('.jobs-easy-apply-form-section__group')?.querySelector('label')?.innerText || name;
+            radioGroups[name] = {
+                type: 'radio',
+                name: label.trim(),
+                required: true,
+                options: [],
+            };
+        }
+        const optionLabel = el.closest('label')?.innerText ||
+                            el.nextElementSibling?.innerText || el.value;
+        radioGroups[name].options.push({value: el.value, text: optionLabel.trim()});
+    });
+    results.push(...Object.values(radioGroups));
+
+    // Checkboxes
+    modal.querySelectorAll('input[type="checkbox"]').forEach(el => {
+        const label = el.getAttribute('aria-label') ||
+                      el.closest('label')?.innerText ||
+                      el.getAttribute('name') || '';
+        results.push({
+            type: 'checkbox',
+            name: label.trim(),
+            required: false,
+            checked: el.checked,
+        });
+    });
+
+    // File uploads
+    modal.querySelectorAll('input[type="file"]').forEach(el => {
+        const label = el.getAttribute('aria-label') ||
+                      el.closest('.jobs-easy-apply-form-section__group')?.querySelector('label')?.innerText ||
+                      'Resume/CV';
+        results.push({
+            type: 'file',
+            name: label.trim(),
+            required: el.required,
+        });
+    });
+
+    // Buttons
+    const submitBtn = modal.querySelector('button[aria-label="Submit application"]');
+    const nextBtn = modal.querySelector('button[aria-label="Continue to next step"]') ||
+                    modal.querySelector('button[aria-label="Continue to review"]') ||
+                    modal.querySelector('button.artdeco-button--primary');
+
+    return {
+        fields: results,
+        has_submit: !!submitBtn,
+        has_next: !!nextBtn,
+        total_fields: results.length,
+    };
+}
+"""
+
 
 def _ensure_screenshot_dir() -> Path:
     SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
@@ -76,13 +174,49 @@ def build_search_url(
     easy_apply: bool = True,
 ) -> str:
     """Build a LinkedIn job search URL with filters."""
+    from urllib.parse import quote_plus
+
     params = []
     if positions:
-        params.append(f"keywords={positions.replace(', ', '%2C%20')}")
+        params.append(f"keywords={quote_plus(positions)}")
     if locations:
-        params.append(f"location={locations.replace(', ', '%2C%20')}")
+        params.append(f"location={quote_plus(locations)}")
     if easy_apply:
         params.append("f_AL=true")
+
+    # Apply settings-based filters
+    settings = get_settings()
+
+    # Experience levels
+    exp_map = {
+        "internship": "1", "entry": "2", "associate": "3",
+        "mid_senior_level": "4", "director": "5", "executive": "6",
+    }
+    exp_codes = [exp_map[e] for e in settings.linkedin.experience_levels if e in exp_map]
+    if exp_codes:
+        params.append(f"f_E={','.join(exp_codes)}")
+
+    # Job types
+    jt_map = {
+        "full_time": "F", "part_time": "P", "contract": "C",
+        "temporary": "T", "internship": "I", "volunteer": "V", "other": "O",
+    }
+    jt_codes = [jt_map[k] for k, v in settings.linkedin.job_types.items() if v and k in jt_map]
+    if jt_codes:
+        params.append(f"f_JT={','.join(jt_codes)}")
+
+    # Date filter
+    date_map = {
+        "day": "r86400", "week": "r604800", "month": "r2592000",
+        "3_months": "r7776000", "6_months": "r15552000", "year": "r31536000",
+    }
+    date_code = date_map.get(settings.linkedin.date_filter)
+    if date_code:
+        params.append(f"f_TPR={date_code}")
+
+    # Distance
+    if settings.linkedin.distance != 25:
+        params.append(f"distance={settings.linkedin.distance}")
 
     base = "https://www.linkedin.com/jobs/search/"
     query = "&".join(params)
@@ -278,110 +412,23 @@ def detect_form_fields() -> str:
     progress = _get_progress_percentage()
 
     try:
-        fields = page.evaluate(
-            """
+        fields = page.evaluate(_DETECT_FIELDS_JS)
+
+        # Add follow checkbox detection
+        follow_result = page.evaluate("""
             () => {
-                const results = [];
                 const modal = document.querySelector('.jobs-easy-apply-modal') ||
-                              document.querySelector('[role="dialog"]') ||
-                              document.querySelector('.artdeco-modal');
-
-                if (!modal) return {fields: [], has_submit: false, has_next: false, total_fields: 0};
-
-                // Text inputs (email, tel, number, url, and untyped)
-                modal.querySelectorAll('input[type="text"], input[type="email"], input[type="tel"], input[type="number"], input[type="url"], input:not([type])').forEach(el => {
-                    const label = el.getAttribute('aria-label') ||
-                                  el.closest('.jobs-easy-apply-form-section__group')?.querySelector('label')?.innerText ||
-                                  el.getAttribute('name') || '';
-                    results.push({
-                        type: 'text',
-                        name: label.trim(),
-                        required: el.required || el.getAttribute('aria-required') === 'true',
-                        value: el.value || '',
-                        input_type: el.type || 'text',
-                    });
-                });
-
-                // Selects
-                modal.querySelectorAll('select').forEach(el => {
-                    const label = el.getAttribute('aria-label') ||
-                                  el.closest('.jobs-easy-apply-form-section__group')?.querySelector('label')?.innerText ||
-                                  el.getAttribute('name') || '';
-                    const options = Array.from(el.options).map(o => ({value: o.value, text: o.text}));
-                    results.push({
-                        type: 'select',
-                        name: label.trim(),
-                        required: el.required || el.getAttribute('aria-required') === 'true',
-                        value: el.value,
-                        options: options,
-                    });
-                });
-
-                // Radios (grouped by name)
-                const radioGroups = {};
-                modal.querySelectorAll('input[type="radio"]').forEach(el => {
-                    const name = el.getAttribute('name') || 'unknown';
-                    if (!radioGroups[name]) {
-                        const label = el.closest('.jobs-easy-apply-form-section__group')?.querySelector('label')?.innerText || name;
-                        radioGroups[name] = {
-                            type: 'radio',
-                            name: label.trim(),
-                            required: true,
-                            options: [],
-                        };
-                    }
-                    const optionLabel = el.closest('label')?.innerText ||
-                                        el.nextElementSibling?.innerText || el.value;
-                    radioGroups[name].options.push({value: el.value, text: optionLabel.trim()});
-                });
-                results.push(...Object.values(radioGroups));
-
-                // Checkboxes
-                modal.querySelectorAll('input[type="checkbox"]').forEach(el => {
-                    const label = el.getAttribute('aria-label') ||
-                                  el.closest('label')?.innerText ||
-                                  el.getAttribute('name') || '';
-                    results.push({
-                        type: 'checkbox',
-                        name: label.trim(),
-                        required: false,
-                        checked: el.checked,
-                    });
-                });
-
-                // File uploads
-                modal.querySelectorAll('input[type="file"]').forEach(el => {
-                    const label = el.getAttribute('aria-label') ||
-                                  el.closest('.jobs-easy-apply-form-section__group')?.querySelector('label')?.innerText ||
-                                  'Resume/CV';
-                    results.push({
-                        type: 'file',
-                        name: label.trim(),
-                        required: el.required,
-                    });
-                });
-
-                // Detect follow company checkbox (should be unchecked)
+                              document.querySelector('[role="dialog"]');
+                if (!modal) return {has_follow_checkbox: false, follow_checked: false};
                 const followCheckbox = modal.querySelector('input[name="followCompany"]') ||
                                        modal.querySelector('[data-follow-company]');
-
-                // Buttons
-                const submitBtn = modal.querySelector('button[aria-label="Submit application"]');
-                const nextBtn = modal.querySelector('button[aria-label="Continue to next step"]') ||
-                                modal.querySelector('button[aria-label="Continue to review"]') ||
-                                modal.querySelector('button.artdeco-button--primary');
-
                 return {
-                    fields: results,
-                    has_submit: !!submitBtn,
-                    has_next: !!nextBtn,
                     has_follow_checkbox: !!followCheckbox,
                     follow_checked: followCheckbox ? followCheckbox.checked : false,
-                    total_fields: results.length,
                 };
             }
-            """
-        )
+        """)
+        fields.update(follow_result)
 
         if progress is not None:
             fields["progress_percent"] = progress
@@ -408,104 +455,7 @@ def detect_fields_with_profile() -> str:
     progress = _get_progress_percentage()
 
     try:
-        raw = page.evaluate(
-            """
-            () => {
-                const results = [];
-                const modal = document.querySelector('.jobs-easy-apply-modal') ||
-                              document.querySelector('[role="dialog"]') ||
-                              document.querySelector('.artdeco-modal');
-
-                if (!modal) return {fields: [], has_submit: false, has_next: false, total_fields: 0};
-
-                // Text inputs
-                modal.querySelectorAll('input[type="text"], input[type="email"], input[type="tel"], input[type="number"], input[type="url"], input:not([type])').forEach(el => {
-                    const label = el.getAttribute('aria-label') ||
-                                  el.closest('.jobs-easy-apply-form-section__group')?.querySelector('label')?.innerText ||
-                                  el.getAttribute('name') || '';
-                    results.push({
-                        type: 'text',
-                        name: label.trim(),
-                        required: el.required || el.getAttribute('aria-required') === 'true',
-                        value: el.value || '',
-                        input_type: el.type || 'text',
-                    });
-                });
-
-                // Selects
-                modal.querySelectorAll('select').forEach(el => {
-                    const label = el.getAttribute('aria-label') ||
-                                  el.closest('.jobs-easy-apply-form-section__group')?.querySelector('label')?.innerText ||
-                                  el.getAttribute('name') || '';
-                    const options = Array.from(el.options).map(o => ({value: o.value, text: o.text}));
-                    results.push({
-                        type: 'select',
-                        name: label.trim(),
-                        required: el.required || el.getAttribute('aria-required') === 'true',
-                        value: el.value,
-                        options: options,
-                    });
-                });
-
-                // Radios (grouped by name)
-                const radioGroups = {};
-                modal.querySelectorAll('input[type="radio"]').forEach(el => {
-                    const name = el.getAttribute('name') || 'unknown';
-                    if (!radioGroups[name]) {
-                        const label = el.closest('.jobs-easy-apply-form-section__group')?.querySelector('label')?.innerText || name;
-                        radioGroups[name] = {
-                            type: 'radio',
-                            name: label.trim(),
-                            required: true,
-                            options: [],
-                        };
-                    }
-                    const optionLabel = el.closest('label')?.innerText ||
-                                        el.nextElementSibling?.innerText || el.value;
-                    radioGroups[name].options.push({value: el.value, text: optionLabel.trim()});
-                });
-                results.push(...Object.values(radioGroups));
-
-                // Checkboxes
-                modal.querySelectorAll('input[type="checkbox"]').forEach(el => {
-                    const label = el.getAttribute('aria-label') ||
-                                  el.closest('label')?.innerText ||
-                                  el.getAttribute('name') || '';
-                    results.push({
-                        type: 'checkbox',
-                        name: label.trim(),
-                        required: false,
-                        checked: el.checked,
-                    });
-                });
-
-                // File uploads
-                modal.querySelectorAll('input[type="file"]').forEach(el => {
-                    const label = el.getAttribute('aria-label') ||
-                                  el.closest('.jobs-easy-apply-form-section__group')?.querySelector('label')?.innerText ||
-                                  'Resume/CV';
-                    results.push({
-                        type: 'file',
-                        name: label.trim(),
-                        required: el.required,
-                    });
-                });
-
-                // Buttons
-                const submitBtn = modal.querySelector('button[aria-label="Submit application"]');
-                const nextBtn = modal.querySelector('button[aria-label="Continue to next step"]') ||
-                                modal.querySelector('button[aria-label="Continue to review"]') ||
-                                modal.querySelector('button.artdeco-button--primary');
-
-                return {
-                    fields: results,
-                    has_submit: !!submitBtn,
-                    has_next: !!nextBtn,
-                    total_fields: results.length,
-                };
-            }
-            """
-        )
+        raw = page.evaluate(_DETECT_FIELDS_JS)
 
         # Match each field against profile
         needs_human = []
@@ -617,6 +567,7 @@ def submit_application() -> str:
     1. Unfollow company if checkbox is checked
     2. Check dry_run — if true, do NOT click Submit
     3. Click Submit
+    4. Verify submission by checking modal closed
     """
     settings = get_settings()
     if settings.apply.dry_run:
@@ -635,6 +586,20 @@ def submit_application() -> str:
         btn = page.locator('button[aria-label="Submit application"]').first
         btn.click(timeout=5000)
         human_delay()
+
+        # Verify submission succeeded — check modal closed
+        try:
+            modal = page.locator('.jobs-easy-apply-modal, [role="dialog"], .artdeco-modal').first
+            modal.wait_for(state="hidden", timeout=5000)
+            logger.info("Submit verified: modal closed")
+        except Exception:
+            # Modal might still be open — check for success message
+            success = page.locator('.artdeco-inline-feedback--success, .jobs-succeeded-apply-message').first
+            if success.is_visible(timeout=2000):
+                logger.info("Submit verified: success message shown")
+            else:
+                logger.warning("Submit verification inconclusive — modal state unknown")
+
         _take_debug_screenshot("after_submit")
         save_session()
         return "submitted"

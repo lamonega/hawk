@@ -73,10 +73,27 @@ def load_settings(config_dir: Path | None = None) -> Settings:
 
 # Singleton for convenience
 _settings: Settings | None = None
+_settings_mtime: float = 0
 
 
 def get_settings() -> Settings:
-    global _settings
-    if _settings is None:
+    global _settings, _settings_mtime
+    config_path = CONFIG_DIR / "settings.yaml"
+    try:
+        current_mtime = config_path.stat().st_mtime if config_path.exists() else 0
+    except Exception:
+        current_mtime = 0
+
+    # Reload if settings file changed or first load
+    if _settings is None or current_mtime > _settings_mtime:
         _settings = load_settings()
+        _settings_mtime = current_mtime
     return _settings
+
+
+def reload_settings() -> Settings:
+    """Force reload settings from disk."""
+    global _settings, _settings_mtime
+    _settings = None
+    _settings_mtime = 0
+    return get_settings()

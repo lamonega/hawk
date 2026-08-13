@@ -420,12 +420,15 @@ def store_application(
                 "Stop applying and alert the human."
             )
 
-        insert_application(
+        inserted = insert_application(
             job_id=job_id,
             status=status,
             score=score,
             dry_run=dry_run,
         )
+        if not inserted:
+            return f"Already recorded: {job_id} (duplicate application)"
+
         count = increment_daily_count()
         remaining = max(0, settings.apply.daily_max - count)
         return (
@@ -590,7 +593,7 @@ def hawk_update_profile(field_path: str, value: str) -> str:
     Returns:
         Confirmation message.
     """
-    from hawk.profile import load_profile, save_profile
+    from hawk.profile import load_profile, save_profile, UserProfile
 
     try:
         profile = load_profile()
@@ -611,6 +614,12 @@ def hawk_update_profile(field_path: str, value: str) -> str:
             obj[last_key] = value
         else:
             setattr(obj, last_key, value)
+
+        # Re-validate the entire profile before saving
+        try:
+            UserProfile(**profile.model_dump())
+        except Exception as val_err:
+            return f"error: Validation failed after update: {val_err}"
 
         save_profile(profile)
         return f"Profile updated: {field_path} = '{value}'"
