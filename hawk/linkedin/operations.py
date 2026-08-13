@@ -259,6 +259,66 @@ async def extract_jobs_list() -> str:
                     const seen = new Set();
                     const jobs = [];
 
+                    // Strategy 1: Modern split UI (data-display-contents)
+                    const modernCards = Array.from(document.querySelectorAll('div[data-display-contents="true"]')).filter(el => {
+                        const text = el.innerText || '';
+                        return (text.includes('Solicitud sencilla') || text.includes('Easy Apply') || text.includes('Adelántate') || text.includes('hace') || text.includes('Publicado')) &&
+                               text.length > 20 && text.length < 800;
+                    });
+
+                    if (modernCards.length > 0) {
+                        for (const card of modernCards) {
+                            const text = card.innerText.trim();
+                            const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+                            if (lines.length < 2) continue;
+
+                            let role = lines[0].replace(/^Seleccionado,\s*/i, '').replace(/\s*\(empleo verificado\)/i, '');
+                            if (role === 'Seleccionado' || role.length < 3) {
+                                role = lines[1] || '';
+                            }
+
+                            if (!role || seen.has(role)) continue;
+                            seen.add(role);
+
+                            let company = '';
+                            let location = '';
+                            for (let i = 1; i < lines.length; i++) {
+                                const line = lines[i];
+                                if (line === role || line.includes('empleo verificado') || line.includes('Seleccionado')) continue;
+                                if (!company && !line.includes('Adelántate') && !line.includes('Publicado') && !line.includes('hace') && !line.includes('Solicitud') && !line.includes('Evaluando')) {
+                                    company = line;
+                                    continue;
+                                }
+                                if (company && !location && (line.includes('Buenos Aires') || line.includes('Argentina') || line.includes('Remoto') || line.includes('Híbrido') || line.includes('Presencial') || line.includes('alrededores'))) {
+                                    location = line;
+                                    break;
+                                }
+                            }
+
+                            const linkEl = card.querySelector('a[href*="currentJobId="], a[href*="/jobs/view/"]');
+                            let link = '';
+                            let jobId = '';
+                            if (linkEl) {
+                                link = linkEl.href;
+                                const m = link.match(/currentJobId=(\d+)/) || link.match(/view\/(?:.*-)?(\d+)/);
+                                if (m) jobId = m[1];
+                            }
+
+                            jobs.push({
+                                job_id: jobId,
+                                role: role,
+                                company: company,
+                                location: location,
+                                link: link || (jobId ? `https://www.linkedin.com/jobs/view/${jobId}/` : ''),
+                                easy_apply: text.toLowerCase().includes('solicitud sencilla') || text.toLowerCase().includes('easy apply'),
+                                already_applied: text.toLowerCase().includes('solicitado') || text.toLowerCase().includes('applied'),
+                            });
+                        }
+
+                        if (jobs.length > 0) return jobs;
+                    }
+
+                    // Strategy 2: Traditional card selectors
                     const cardSelectors = [
                         'ul.jobs-search__results-list > li',
                         '.scaffold-layout__list-container > li',
@@ -340,12 +400,12 @@ async def extract_jobs_list() -> str:
                         }
                     }
 
-                    // Fallback if cards selector returned nothing
+                    // Strategy 3: Fallback direct links
                     if (jobs.length === 0) {
-                        const links = Array.from(document.querySelectorAll('a[href*="/jobs/view/"]'));
+                        const links = Array.from(document.querySelectorAll('a[href*="/jobs/view/"], a[href*="currentJobId="]'));
                         for (const link of links) {
                             const href = link.href.split('?')[0];
-                            const idMatch = href.match(/view\/(?:.*-)?(\d+)/) || href.match(/(\d{8,12})/);
+                            const idMatch = href.match(/view\/(?:.*-)?(\d+)/) || href.match(/currentJobId=(\d+)/) || href.match(/(\d{8,12})/);
                             const jobId = idMatch ? idMatch[1] : '';
                             if (!jobId || seen.has(jobId)) continue;
                             seen.add(jobId);
