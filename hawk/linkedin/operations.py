@@ -868,7 +868,27 @@ async def submit_application() -> str:
         # Unfollow company before submitting
         await unfollow_company()
 
-        btn = page.locator('button[aria-label="Submit application"]').first
+        submit_selectors = [
+            'button[aria-label*="Submit application"]',
+            'button[aria-label*="Enviar solicitud"]',
+            'button:has-text("Enviar solicitud")',
+            'button:has-text("Submit application")',
+            'button:has-text("Enviar")',
+            'button:has-text("Submit")',
+        ]
+        btn = None
+        for sel in submit_selectors:
+            try:
+                loc = page.locator(sel).first
+                if await loc.is_visible(timeout=1500):
+                    btn = loc
+                    break
+            except Exception:
+                continue
+
+        if btn is None:
+            return "error: Submit button not found"
+
         await btn.click(timeout=5000)
         await human_delay()
 

@@ -107,6 +107,29 @@ _AUTOFILL_EVALUATE_JS = r"""
         }
     }
 
+    // 1.1 Textareas (Portfolio, Links, Cover Letter, Notes)
+    const textareas = Array.from(modal.querySelectorAll('textarea'));
+    for (const ta of textareas) {
+        const label = getLabel(ta).toLowerCase();
+        if (ta.value && ta.value.trim() !== '') continue;
+
+        if (label.includes('github') || label.includes('portfolio') || label.includes('web') || label.includes('link') || label.includes('url')) {
+            const gitVal = contact.github || 'https://github.com/lflamonega';
+            setInputValue(ta, gitVal);
+            filled.push({ field: 'portfolio_textarea', value: gitVal, label: label });
+        } else if (label.includes('linkedin') || label.includes('perfil')) {
+            const liVal = contact.linkedin || 'https://www.linkedin.com/in/lflamonega';
+            setInputValue(ta, liVal);
+            filled.push({ field: 'linkedin_textarea', value: liVal, label: label });
+        } else if (label.includes('cover') || label.includes('carta') || label.includes('presentación') || label.includes('summary')) {
+            const sumVal = p.summary || '';
+            if (sumVal) {
+                setInputValue(ta, sumVal);
+                filled.push({ field: 'summary_textarea', value: sumVal.slice(0, 30), label: label });
+            }
+        }
+    }
+
     // 2. Selects / Dropdowns
     const selects = Array.from(modal.querySelectorAll('select'));
     for (const select of selects) {
@@ -117,8 +140,11 @@ _AUTOFILL_EVALUATE_JS = r"""
         const hasArgentina = options.find(o => o.text.trim().toLowerCase() === 'argentina' || o.text.includes('Argentina') || o.value.toLowerCase() === 'ar');
         if (hasArgentina && !chosenVal) {
             chosenVal = hasArgentina.value;
-        } else if (label.includes('país') || label.includes('country') || label.includes('código de país') || label.includes('phone country') || label.includes('residencia') || label.includes('location')) {
+        } else if (label.includes('país') || label.includes('country') || label.includes('código de país') || label.includes('phone country') || label.includes('residencia') || label.includes('nationality')) {
             const opt = options.find(o => o.value.toLowerCase() === 'ar' || o.text.toLowerCase().includes('argentina') || o.text.includes('+54'));
+            if (opt) chosenVal = opt.value;
+        } else if (label.includes('ciudad') || label.includes('city') || label.includes('location') || label.includes('provincia') || label.includes('state')) {
+            const opt = options.find(o => o.text.toLowerCase().includes('buenos aires') || o.text.toLowerCase().includes('berisso') || o.text.toLowerCase().includes('la plata'));
             if (opt) chosenVal = opt.value;
         } else if (label.includes('inglés') || label.includes('english') || label.includes('idioma') || label.includes('language')) {
             const opt = options.find(o => o.text.toLowerCase().includes('professional') || o.text.toLowerCase().includes('avanzado') || o.text.toLowerCase().includes('c1') || o.text.toLowerCase().includes('b2') || o.text.toLowerCase().includes('conversational') || o.text.toLowerCase().includes('intermedio'));

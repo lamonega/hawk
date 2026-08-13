@@ -78,27 +78,37 @@ async def snapshot() -> str:
                                            tag === 'select' ? 'combobox' :
                                            tag === 'textarea' ? 'textbox' : tag);
 
-                            // Precision label extraction
+                            // Precision label extraction based on element type
                             let cleanLabel = '';
-                            if (el.id) {
-                                const labelFor = document.querySelector(`label[for="${el.id}"]`);
-                                if (labelFor) cleanLabel = labelFor.innerText;
-                            }
-                            if (!cleanLabel && el.labels && el.labels[0]) {
-                                cleanLabel = el.labels[0].innerText;
-                            }
-                            if (!cleanLabel) {
-                                const parent = el.closest('.jobs-easy-apply-form-section__group, .fb-dash-form-element, div[data-test-form-element], fieldset, tr') || el.parentElement;
-                                const parentLabel = parent ? parent.querySelector('label, legend, .fb-dash-form-element__label, dt, th') : null;
-                                if (parentLabel) cleanLabel = parentLabel.innerText;
-                            }
-                            if (!cleanLabel) {
+                            if (tag === 'button' || tag === 'a' || role === 'button' || role === 'link') {
                                 cleanLabel = el.getAttribute('aria-label') ||
-                                             el.getAttribute('placeholder') ||
+                                             el.innerText?.trim() ||
                                              el.getAttribute('title') ||
-                                             (tag === 'button' || tag === 'a' ? el.innerText : '') ||
+                                             el.value ||
                                              el.name ||
                                              '';
+                            } else {
+                                if (el.id) {
+                                    const labelFor = document.querySelector(`label[for="${el.id}"]`);
+                                    if (labelFor) cleanLabel = labelFor.innerText;
+                                }
+                                if (!cleanLabel && el.labels && el.labels[0]) {
+                                    cleanLabel = el.labels[0].innerText;
+                                }
+                                if (!cleanLabel) {
+                                    const formGroup = el.closest('.jobs-easy-apply-form-section__group, .fb-dash-form-element, div[data-test-form-element], fieldset, tr');
+                                    if (formGroup && !formGroup.classList.contains('jobs-easy-apply-modal') && !formGroup.classList.contains('artdeco-modal')) {
+                                        const formLabel = formGroup.querySelector('label, legend, .fb-dash-form-element__label, dt, th');
+                                        if (formLabel) cleanLabel = formLabel.innerText;
+                                    }
+                                }
+                                if (!cleanLabel) {
+                                    cleanLabel = el.getAttribute('aria-label') ||
+                                                 el.getAttribute('placeholder') ||
+                                                 el.getAttribute('title') ||
+                                                 el.name ||
+                                                 '';
+                                }
                             }
 
                             // Clean up multiline text / options pollution in select labels
@@ -359,25 +369,6 @@ async def upload_file(element_index: int, file_path: str) -> str:
         return f"error uploading file: {e}"
 
     return f"error: Could not find file input for element {element_index}"
-
-
-async def upload_file(element_index: int, file_path: str) -> str:
-    """Upload a file to a file input element."""
-    page = get_page()
-    if page is None:
-        return "error: Browser not started"
-
-    element = get_element_by_index(element_index)
-    if element is None:
-        return f"error: Element index {element_index} not found in last snapshot"
-
-    # For file inputs, we need to find the input[type=file] directly
-    try:
-        locator = page.locator("input[type=file]").first
-        await locator.set_input_files(file_path, timeout=5000)
-        return f"Uploaded '{file_path}' to file input"
-    except Exception as e:
-        return f"error uploading: {e}"
 
 
 async def take_screenshot() -> str:
