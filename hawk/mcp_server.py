@@ -235,9 +235,11 @@ async def linkedin_extract_job() -> str:
     Returns:
         JSON with role, company, location, description, easy_apply status, link.
     """
-    from hawk.linkedin.operations import extract_job_details
+    import importlib
+    import hawk.linkedin.operations
+    importlib.reload(hawk.linkedin.operations)
 
-    return await extract_job_details()
+    return await hawk.linkedin.operations.extract_job_details()
 
 
 @server.tool()
@@ -247,9 +249,11 @@ async def linkedin_extract_jobs_list() -> str:
     Returns:
         JSON array of job summaries with job_id, role, company, location, link, easy_apply.
     """
-    from hawk.linkedin.operations import extract_jobs_list
+    import importlib
+    import hawk.linkedin.operations
+    importlib.reload(hawk.linkedin.operations)
 
-    return await extract_jobs_list()
+    return await hawk.linkedin.operations.extract_jobs_list()
 
 
 @server.tool()
