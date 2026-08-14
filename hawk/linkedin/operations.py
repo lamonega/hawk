@@ -1431,19 +1431,42 @@ def generate_recruiter_pitch(
     company: str,
     recruiter_name: str = "",
     top_skills: list[str] | None = None,
+    language: str = "auto",
 ) -> str:
-    """Generate a high-impact, concise LinkedIn connection note (< 300 chars limit)."""
+    """Generate a high-impact, concise LinkedIn connection note (< 300 chars limit).
+
+    Strictly matches the language of the job posting (Spanish, English, etc.).
+    """
     from hawk.profile import load_profile
 
     profile = load_profile()
     name = profile.personal.first_name
-    skills_str = ", ".join(top_skills[:3]) if top_skills else "CI/CD, Docker & AWS"
 
-    greeting = f"Hi {recruiter_name.split()[0]}," if recruiter_name else "Hi,"
-    note = f"{greeting} I applied for the {job_title} role at {company}. With 2+ yrs optimizing {skills_str}, I'd love to connect and discuss how I can contribute to the team! Best, {name}"
+    # Detect language if auto
+    is_es = language.lower() in ("es", "spanish", "español")
+    if language == "auto":
+        es_indicators = (
+            "ingeniero", "desarrollador", "arquitecto", "analista", "responsable",
+            "líder", "especialista", "soporte", "en remoto", "híbrido", "datos",
+            "sistemas", "tecnología", "infraestructura", "puesto", "vacante"
+        )
+        combined = f"{job_title} {company}".lower()
+        if any(ind in combined for ind in es_indicators):
+            is_es = True
 
-    if len(note) > 295:
-        note = f"{greeting} I applied to the {job_title} role at {company}. With hands-on DevOps & {skills_str} experience, I'd love to connect! Best, {name}"
+    skills_str = ", ".join(top_skills[:3]) if top_skills else ("CI/CD, Docker y AWS" if is_es else "CI/CD, Docker & AWS")
+    first_recruiter_name = recruiter_name.split()[0] if recruiter_name else ""
+
+    if is_es:
+        greeting = f"Hola {first_recruiter_name}," if first_recruiter_name else "Hola,"
+        note = f"{greeting} me postulé a la vacante de {job_title} en {company}. Con 2+ años de experiencia en {skills_str}, me encantaría conectar y conversar sobre cómo puedo sumar al equipo. ¡Saludos, {name}!"
+        if len(note) > 295:
+            note = f"{greeting} me postulé a {job_title} en {company}. Con experiencia en DevOps y {skills_str}, me encantaría conectar. ¡Saludos, {name}!"
+    else:
+        greeting = f"Hi {first_recruiter_name}," if first_recruiter_name else "Hi,"
+        note = f"{greeting} I applied for the {job_title} role at {company}. With 2+ yrs optimizing {skills_str}, I'd love to connect and discuss how I can contribute to the team! Best, {name}"
+        if len(note) > 295:
+            note = f"{greeting} I applied to the {job_title} role at {company}. With hands-on DevOps & {skills_str} experience, I'd love to connect! Best, {name}"
 
     return note[:300]
 

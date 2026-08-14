@@ -59,16 +59,61 @@ async def test_generate_cover_letter_pdf(tmp_path):
 
 
 def test_cover_letter_html_rendering():
-    html = render_ats_cover_letter_html(
+    # English test
+    html_en = render_ats_cover_letter_html(
         job_title="DevOps Engineer",
         company="TechCorp",
         hiring_manager="Jane Smith",
+        language="en",
     )
-    assert "Jane Smith" in html
-    assert "TechCorp" in html
-    assert "DevOps Engineer" in html
-    assert "Laureano" in html
-    assert "lflamonega@gmail.com" in html
+    assert "Jane Smith" in html_en
+    assert "TechCorp" in html_en
+    assert "DevOps Engineer" in html_en
+    assert "Sincerely," in html_en
+    assert "Laureano" in html_en
+    assert "lflamonega@gmail.com" in html_en
+
+    # Spanish test
+    html_es = render_ats_cover_letter_html(
+        job_title="Ingeniero DevOps",
+        company="Mercado Libre",
+        hiring_manager="Carlos Perez",
+        language="es",
+    )
+    assert "Carlos Perez" in html_es
+    assert "Mercado Libre" in html_es
+    assert "Ingeniero DevOps" in html_es
+    assert "Atentamente," in html_es
+    assert "Laureano" in html_es
+
+
+def test_recruiter_pitch_spanish_and_english():
+    # Spanish pitch
+    pitch_es = generate_recruiter_pitch(
+        job_title="Ingeniero de Plataforma",
+        company="Banco Galicia",
+        recruiter_name="Martin Gomez",
+        top_skills=["Docker", "Linux", "Terraform"],
+        language="es",
+    )
+    assert len(pitch_es) <= 300
+    assert "Hola Martin" in pitch_es
+    assert "Banco Galicia" in pitch_es
+    assert "Ingeniero de Plataforma" in pitch_es
+    assert "Laureano" in pitch_es
+
+    # English pitch
+    pitch_en = generate_recruiter_pitch(
+        job_title="Cloud Engineer",
+        company="Amazon AWS",
+        recruiter_name="Michael Scott",
+        top_skills=["AWS", "EKS", "CI/CD"],
+        language="en",
+    )
+    assert len(pitch_en) <= 300
+    assert "Hi Michael" in pitch_en
+    assert "Amazon AWS" in pitch_en
+    assert "Cloud Engineer" in pitch_en
 
 
 def test_application_harness_init():

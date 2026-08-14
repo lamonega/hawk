@@ -72,9 +72,11 @@ Follow this pipeline when asked to apply to jobs:
 
 ### 4. Tailor (optional, if score >= 7)
 
-1. **You** generate a tailored resume: call `hawk_generate_tailored_resume(job_id=..., job_title=..., tailored_headline=..., tailored_summary=..., highlighted_skills=...)`.
+1. **Detect Language**: Identify whether the job description is in Spanish, English, or another language.
+2. **You** generate a tailored resume matching the job's language: call `hawk_generate_tailored_resume(job_id=..., job_title=..., tailored_headline=..., tailored_summary=..., highlighted_skills=...)`.
    This compiles a clean ATS-optimized PDF saved to `output/resumes/resume_{job_id}.pdf`.
-2. Save the returned `resume_path` to use during application.
+3. Optionally generate a matching cover letter in the same language: call `hawk_generate_cover_letter(job_id=..., job_title=..., company=..., tailored_body=..., language=...)`.
+4. Save the returned `resume_path` to use during application.
 
 ### 5. Apply (Easy Apply)
 
@@ -102,6 +104,7 @@ Always ask the human before:
 
 ## Rules
 
+- **Always prioritize the language of the job posting**: You MUST detect the primary language of the job posting (e.g. Spanish, English, etc.). The generated tailored headline, professional summary, highlighted skills, custom experience bullets, cover letter, and recruiter connection note MUST be written in that exact same language. Never send English materials for a Spanish posting or vice versa.
 - **Never** use emojis anywhere in resumes, cover letters, form fields, answers, or generated files. Resumes must remain clean, professional, and strictly ATS-compliant.
 - **Never** hardcode personal information into MCP tools, codebase, or templates. All personal details must be loaded dynamically from `config/profile.yaml` or `config/plain_text_resume.yaml`.
 - **Never** invent, fabricate, or hallucinate skills, experiences, dates, companies, or bullets. Resumes and answers must be 100% truthful to the user's data.

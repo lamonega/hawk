@@ -970,11 +970,13 @@ async def hawk_generate_cover_letter(
     company: str = "",
     hiring_manager: str = "",
     tailored_body: list[str] | str | None = None,
+    language: str = "auto",
 ) -> str:
     """Generate an ATS-optimized tailored PDF cover letter for a specific job application.
 
     Reads the user profile, formats tailored paragraphs into clean typography,
     and exports a professional PDF to output/cover_letters/cover_letter_{job_id}.pdf.
+    Always matches the language of the job posting (Spanish, English, etc.).
 
     Args:
         job_id: Unique job identifier or posting hash.
@@ -982,6 +984,7 @@ async def hawk_generate_cover_letter(
         company: Target company name.
         hiring_manager: Optional name of the hiring manager/recruiter.
         tailored_body: List of paragraphs or formatted text for the letter body.
+        language: Language code ('en', 'es', or 'auto' to detect from job/company).
 
     Returns:
         Absolute path to the generated PDF cover letter file.
@@ -997,6 +1000,7 @@ async def hawk_generate_cover_letter(
             company=company,
             hiring_manager=hiring_manager,
             tailored_body=tailored_body,
+            language=language,
         )
         return pdf_path
     except Exception as e:
@@ -1033,14 +1037,18 @@ def linkedin_generate_recruiter_pitch(
     company: str,
     recruiter_name: str = "",
     top_skills: list[str] | None = None,
+    language: str = "auto",
 ) -> str:
     """Generate a personalized connection request pitch (< 300 chars) for a recruiter/job poster.
+
+    Always matches the language of the job posting (Spanish, English, etc.).
 
     Args:
         job_title: Target job title.
         company: Target company name.
         recruiter_name: Recruiter name (if known).
         top_skills: Optional top 2-3 skills to highlight.
+        language: Language code ('en', 'es', or 'auto' to detect).
 
     Returns:
         Connection pitch text formatted to stay within LinkedIn's 300 char note limit.
@@ -1052,6 +1060,7 @@ def linkedin_generate_recruiter_pitch(
         company=company,
         recruiter_name=recruiter_name,
         top_skills=top_skills,
+        language=language,
     )
 
 

@@ -426,10 +426,11 @@ def render_ats_cover_letter_html(
     company: str = "",
     hiring_manager: str = "",
     tailored_body_paragraphs: list[str] | str | None = None,
+    language: str = "auto",
 ) -> str:
     """Render an ATS-compliant professional HTML cover letter.
 
-    Matches the typography and clean formatting of the ATS resume.
+    Prioritizes the primary language of the job posting (Spanish, English, etc.).
     """
     if profile_data is None:
         p = load_profile().model_dump()
@@ -453,7 +454,24 @@ def render_ats_cover_letter_html(
     contact_items = [c for c in [location_str, email, phone, linkedin_url] if c]
     contact_html = " | ".join(contact_items)
 
-    salutation = f"Dear {hiring_manager}," if hiring_manager else (f"Dear Hiring Team at {company}," if company else "Dear Hiring Manager,")
+    # Detect language
+    is_es = language.lower() in ("es", "spanish", "español")
+    if language == "auto":
+        es_indicators = (
+            "ingeniero", "desarrollador", "arquitecto", "analista", "responsable",
+            "líder", "especialista", "soporte", "en remoto", "híbrido", "datos",
+            "sistemas", "tecnología", "infraestructura", "puesto", "vacante"
+        )
+        combined = f"{job_title} {company}".lower()
+        if any(ind in combined for ind in es_indicators):
+            is_es = True
+
+    if is_es:
+        salutation = f"Estimado/a {hiring_manager}:" if hiring_manager else (f"Estimado equipo de selección de {company}:" if company else "Estimado/a responsable de selección:")
+        signoff_text = "Atentamente,"
+    else:
+        salutation = f"Dear {hiring_manager}," if hiring_manager else (f"Dear Hiring Team at {company}," if company else "Dear Hiring Manager,")
+        signoff_text = "Sincerely,"
 
     paragraphs = []
     if isinstance(tailored_body_paragraphs, str) and tailored_body_paragraphs:
@@ -461,13 +479,20 @@ def render_ats_cover_letter_html(
     elif isinstance(tailored_body_paragraphs, list) and tailored_body_paragraphs:
         paragraphs = [str(p).strip() for p in tailored_body_paragraphs if str(p).strip()]
     else:
-        # Default truthful cover letter body
+        # Default truthful cover letter body matching detected language
         summary = p_prof.get("summary", "")
-        paragraphs = [
-            f"I am writing to express my enthusiastic interest in the {job_title or 'open position'}{f' at {company}' if company else ''}. With hands-on experience designing reliable automation workflows, containerizing applications, and managing cloud and Linux infrastructure, I am confident in my ability to deliver immediate value to your team.",
-            summary or "In my recent roles, I have focused on automating CI/CD pipelines, maintaining high service availability, and implementing infrastructure as code to reduce deployment friction and eliminate drift.",
-            "I welcome the opportunity to discuss how my technical background, problem-solving mindset, and dedication to operational excellence align with your team's objectives. Thank you for your time and consideration.",
-        ]
+        if is_es:
+            paragraphs = [
+                f"Me dirijo a ustedes con gran entusiasmo para presentar mi candidatura a la posición de {job_title or 'la vacante'}{f' en {company}' if company else ''}. Con experiencia práctica en el diseño de flujos de automatización, contenerización de aplicaciones y administración de infraestructura Linux y Cloud, confío en aportar valor inmediato a su equipo.",
+                summary or "En mis roles recientes, me he enfocado en automatizar pipelines de CI/CD, mantener alta disponibilidad de servicios e implementar infraestructura como código para reducir la fricción en despliegues.",
+                "Agradezco su tiempo y consideración, y quedo a su entera disposición para coordinar una entrevista y profundizar en cómo mi perfil técnico se alinea con los objetivos del equipo.",
+            ]
+        else:
+            paragraphs = [
+                f"I am writing to express my enthusiastic interest in the {job_title or 'open position'}{f' at {company}' if company else ''}. With hands-on experience designing reliable automation workflows, containerizing applications, and managing cloud and Linux infrastructure, I am confident in my ability to deliver immediate value to your team.",
+                summary or "In my recent roles, I have focused on automating CI/CD pipelines, maintaining high service availability, and implementing infrastructure as code to reduce deployment friction and eliminate drift.",
+                "I welcome the opportunity to discuss how my technical background, problem-solving mindset, and dedication to operational excellence align with your team's objectives. Thank you for your time and consideration.",
+            ]
 
     body_html = "\n".join(f"<p>{para}</p>" for para in paragraphs)
 
@@ -551,7 +576,7 @@ def render_ats_cover_letter_html(
     </div>
 
     <div class="signoff">
-        <div>Sincerely,</div>
+        <div>{signoff_text}</div>
         <div class="signature-name">{full_name}</div>
     </div>
 </body>
@@ -564,6 +589,7 @@ async def generate_tailored_cover_letter(
     company: str = "",
     hiring_manager: str = "",
     tailored_body: list[str] | str | None = None,
+    language: str = "auto",
     output_dir: Path | None = None,
 ) -> str:
     """Generate and save an ATS-optimized tailored PDF cover letter.
@@ -573,7 +599,8 @@ async def generate_tailored_cover_letter(
         job_title: Target job title.
         company: Target company name.
         hiring_manager: Optional name of the hiring manager or recruiter.
-        tailored_body: Paragraphs tailored to the company and role.
+        tailored_body: Paragraphs tailored to the company and role in the job posting language.
+        language: Language code ('en', 'es', or 'auto').
         output_dir: Destination directory. Defaults to output/cover_letters.
 
     Returns:
@@ -588,6 +615,7 @@ async def generate_tailored_cover_letter(
         company=company,
         hiring_manager=hiring_manager,
         tailored_body_paragraphs=tailored_body,
+        language=language,
     )
 
     if output_dir is None:
@@ -603,4 +631,5 @@ async def generate_tailored_cover_letter(
 
     logger.info("Truthful cover letter generated at {}", pdf_path)
     return str(pdf_path.resolve())
+
 
