@@ -102,6 +102,9 @@ Always ask the human before:
 
 ## Rules
 
+- **Never** use emojis anywhere in resumes, cover letters, form fields, answers, or generated files. Resumes must remain clean, professional, and strictly ATS-compliant.
+- **Never** hardcode personal information into MCP tools, codebase, or templates. All personal details must be loaded dynamically from `config/profile.yaml` or `config/plain_text_resume.yaml`.
+- **Never** invent, fabricate, or hallucinate skills, experiences, dates, companies, or bullets. Resumes and answers must be 100% truthful to the user's data.
 - **Never** automate the LinkedIn login. Always use the persistent profile and ask the
   human to log in manually if the session is expired.
 - **Never** submit without checking `apply.dry_run`.

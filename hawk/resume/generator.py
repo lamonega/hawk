@@ -67,19 +67,19 @@ def render_ats_resume_html(
     headline = tailored_headline or p_prof.get("headline", "") or job_title
     summary = tailored_summary or p_prof.get("summary", "")
 
-    # Header contacts
+    # Header contacts (strictly ATS-compliant: no emojis)
     contact_items = []
     if location_str:
-        contact_items.append(f"📍 {location_str}")
+        contact_items.append(location_str)
     if email:
-        contact_items.append(f"✉️ {email}")
+        contact_items.append(email)
     if phone:
-        contact_items.append(f"📞 {phone}")
+        contact_items.append(phone)
     if linkedin_url:
-        contact_items.append(f"🔗 {linkedin_url}")
+        contact_items.append(linkedin_url)
     if github_url:
-        contact_items.append(f"💻 {github_url}")
-    contact_html = " • ".join(contact_items)
+        contact_items.append(github_url)
+    contact_html = " | ".join(contact_items)
 
     # Skills section
     skills_html = ""
