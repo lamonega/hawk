@@ -79,23 +79,26 @@ _AUTOFILL_EVALUATE_JS = r"""
     const skills = p.skills || {};
     const commonAnswers = p.common_answers || {};
 
-    const defaultYears = professional.years_of_experience || '2';
-    const phoneVal = personal.phone || '221 695 9945';
-    const emailVal = personal.email || 'lflamonega@gmail.com';
-    const cityVal = personal.city ? `${personal.city}, ${personal.country || 'Argentina'}` : 'Berisso, Argentina';
-    const postalVal = personal.postal_code || '1923';
+    const defaultYears = professional.years_of_experience || '';
+    const phoneVal = personal.phone || '';
+    const emailVal = personal.email || '';
+    const cityVal = personal.city ? `${personal.city}${personal.country ? ', ' + personal.country : ''}` : (personal.country || '');
+    const postalVal = personal.postal_code || '';
+    const userCountry = (personal.country || '').toLowerCase();
+    const userCity = (personal.city || '').toLowerCase();
+    const userState = (personal.state || '').toLowerCase();
     
-    let rawLi = links.linkedin || 'https://www.linkedin.com/in/lflamonega';
-    if (!rawLi.startsWith('http')) rawLi = 'https://' + (rawLi.startsWith('www.') ? '' : 'www.') + rawLi;
+    let rawLi = links.linkedin || '';
+    if (rawLi && !rawLi.startsWith('http')) rawLi = 'https://' + (rawLi.startsWith('www.') ? '' : 'www.') + rawLi;
     else if (rawLi.startsWith('https://linkedin.com')) rawLi = rawLi.replace('https://linkedin.com', 'https://www.linkedin.com');
     const liVal = rawLi;
 
-    let rawGit = links.github || 'https://github.com/lflamonega';
-    if (!rawGit.startsWith('http')) rawGit = 'https://' + rawGit;
+    let rawGit = links.github || '';
+    if (rawGit && !rawGit.startsWith('http')) rawGit = 'https://' + rawGit;
     const gitVal = rawGit;
 
-    const portVal = links.portfolio ? (links.portfolio.startsWith('http') ? links.portfolio : `https://${links.portfolio}`) : gitVal;
-    const salaryVal = salary.expected ? String(salary.expected).replace(/[^0-9]/g, '') || '950' : '950';
+    const portVal = links.portfolio ? (links.portfolio.startsWith('http') ? links.portfolio : `https://${links.portfolio}`) : (gitVal || liVal);
+    const salaryVal = salary.expected ? (String(salary.expected).replace(/[^0-9]/g, '') || '') : '';
 
     // 0. Check common_answers cache for any element
     function checkCommonAnswers(label) {
@@ -111,7 +114,7 @@ _AUTOFILL_EVALUATE_JS = r"""
     // 1. Phone inputs
     const phoneInputs = Array.from(root.querySelectorAll('input[type="tel"], input[id*="phoneNumber"], input[name*="phone"], input[id*="phone"]'));
     for (const input of phoneInputs) {
-        if (!input.value || input.value.trim() === '') {
+        if ((!input.value || input.value.trim() === '') && phoneVal) {
             setInputValue(input, phoneVal);
             filled.push({ field: 'phone', value: phoneVal, label: getLabel(input) });
         }
@@ -131,32 +134,31 @@ _AUTOFILL_EVALUATE_JS = r"""
             continue;
         }
 
-        if (label.includes('teléfono') || label.includes('telefono') || label.includes('phone') || label.includes('celular') || label.includes('móvil') || label.includes('mobile')) {
+        if ((label.includes('teléfono') || label.includes('telefono') || label.includes('phone') || label.includes('celular') || label.includes('móvil') || label.includes('mobile')) && phoneVal) {
             setInputValue(input, phoneVal);
             filled.push({ field: 'phone', value: phoneVal, label: rawLabel });
-        } else if (label.includes('email') || label.includes('correo') || label.includes('dirección de correo') || input.type === 'email') {
+        } else if ((label.includes('email') || label.includes('correo') || label.includes('dirección de correo') || input.type === 'email') && emailVal) {
             setInputValue(input, emailVal);
             filled.push({ field: 'email', value: emailVal, label: rawLabel });
-        } else if (label.includes('first name') || (label.includes('nombre') && !label.includes('completo') && !label.includes('empresa'))) {
-            const fName = personal.first_name || 'Laureano';
-            setInputValue(input, fName);
-            filled.push({ field: 'first_name', value: fName, label: rawLabel });
-        } else if (label.includes('last name') || label.includes('apellido') || label.includes('surname')) {
-            const lName = personal.last_name || 'Francisco Lamonega';
-            setInputValue(input, lName);
-            filled.push({ field: 'last_name', value: lName, label: rawLabel });
+        } else if ((label.includes('first name') || (label.includes('nombre') && !label.includes('completo') && !label.includes('empresa'))) && personal.first_name) {
+            setInputValue(input, personal.first_name);
+            filled.push({ field: 'first_name', value: personal.first_name, label: rawLabel });
+        } else if ((label.includes('last name') || label.includes('apellido') || label.includes('surname')) && personal.last_name) {
+            setInputValue(input, personal.last_name);
+            filled.push({ field: 'last_name', value: personal.last_name, label: rawLabel });
         } else if (label.includes('full name') || label.includes('nombre completo')) {
-            const fullName = `${personal.first_name || 'Laureano'} ${personal.last_name || 'Francisco Lamonega'}`.trim();
-            setInputValue(input, fullName);
-            filled.push({ field: 'full_name', value: fullName, label: rawLabel });
-        } else if (label.includes('ciudad') || label.includes('city') || label.includes('ubicación') || label.includes('location') || label.includes('localidad')) {
+            const fullName = `${personal.first_name || ''} ${personal.last_name || ''}`.trim();
+            if (fullName) {
+                setInputValue(input, fullName);
+                filled.push({ field: 'full_name', value: fullName, label: rawLabel });
+            }
+        } else if ((label.includes('ciudad') || label.includes('city') || label.includes('ubicación') || label.includes('location') || label.includes('localidad')) && cityVal) {
             setInputValue(input, cityVal);
             filled.push({ field: 'city', value: cityVal, label: rawLabel });
-        } else if (label.includes('código postal') || label.includes('codigo postal') || label.includes('postal code') || label.includes('zip')) {
+        } else if ((label.includes('código postal') || label.includes('codigo postal') || label.includes('postal code') || label.includes('zip')) && postalVal) {
             setInputValue(input, postalVal);
             filled.push({ field: 'postal_code', value: postalVal, label: rawLabel });
         } else if (label.includes('años de experiencia') || label.includes('anos de experiencia') || label.includes('years of experience') || label.includes('cuántos años') || label.includes('cuantos anos') || label.includes('how many years')) {
-            // Check specific skill match in skills dict
             let expYears = defaultYears;
             for (const [skillName, skillYears] of Object.entries(skills)) {
                 if (label.includes(skillName.toLowerCase())) {
@@ -164,8 +166,10 @@ _AUTOFILL_EVALUATE_JS = r"""
                     break;
                 }
             }
-            setInputValue(input, expYears);
-            filled.push({ field: 'experience_years', value: expYears, label: rawLabel });
+            if (expYears) {
+                setInputValue(input, expYears);
+                filled.push({ field: 'experience_years', value: expYears, label: rawLabel });
+            }
         } else if (label.includes('salario') || label.includes('salary') || label.includes('remuneración') || label.includes('remuneracion') || label.includes('pretendida') || label.includes('compensation') || label.includes('sueldo')) {
             const isArs = label.includes('pesos') || label.includes('ars') || label.includes('argentino') || label.includes('argentina');
             const isUsd = label.includes('usd') || label.includes('dolar') || label.includes('dólar') || label.includes('dollar');
@@ -187,17 +191,17 @@ _AUTOFILL_EVALUATE_JS = r"""
                 } else {
                     unknown.push({ type: 'salary_currency_mismatch', label: rawLabel, expected_currency: 'USD', profile_currency: profileCurrency, profile_salary: salary.expected });
                 }
-            } else {
+            } else if (salaryVal) {
                 setInputValue(input, salaryVal);
                 filled.push({ field: 'salary', value: salaryVal, label: rawLabel });
             }
-        } else if (label.includes('linkedin') || label.includes('perfil')) {
+        } else if ((label.includes('linkedin') || label.includes('perfil')) && liVal) {
             setInputValue(input, liVal);
             filled.push({ field: 'linkedin', value: liVal, label: rawLabel });
-        } else if (label.includes('github')) {
+        } else if (label.includes('github') && gitVal) {
             setInputValue(input, gitVal);
             filled.push({ field: 'github', value: gitVal, label: rawLabel });
-        } else if (label.includes('portfolio') || label.includes('portafolio') || label.includes('web') || label.includes('sitio') || label.includes('site') || label.includes('url')) {
+        } else if ((label.includes('portfolio') || label.includes('portafolio') || label.includes('web') || label.includes('sitio') || label.includes('site') || label.includes('url')) && portVal) {
             setInputValue(input, portVal);
             filled.push({ field: 'portfolio', value: portVal, label: rawLabel });
         } else if (input.required || input.getAttribute('aria-required') === 'true') {
@@ -219,13 +223,13 @@ _AUTOFILL_EVALUATE_JS = r"""
             continue;
         }
 
-        if (label.includes('github')) {
+        if (label.includes('github') && gitVal) {
             setInputValue(ta, gitVal);
             filled.push({ field: 'github_textarea', value: gitVal, label: rawLabel });
-        } else if (label.includes('portfolio') || label.includes('portafolio') || label.includes('web') || label.includes('link') || label.includes('url') || label.includes('enlace')) {
+        } else if ((label.includes('portfolio') || label.includes('portafolio') || label.includes('web') || label.includes('link') || label.includes('url') || label.includes('enlace')) && portVal) {
             setInputValue(ta, portVal);
             filled.push({ field: 'portfolio_textarea', value: portVal, label: rawLabel });
-        } else if (label.includes('linkedin') || label.includes('perfil')) {
+        } else if ((label.includes('linkedin') || label.includes('perfil')) && liVal) {
             setInputValue(ta, liVal);
             filled.push({ field: 'linkedin_textarea', value: liVal, label: rawLabel });
         } else if (label.includes('cover') || label.includes('carta') || label.includes('presentación') || label.includes('presentacion') || label.includes('summary') || label.includes('resumen') || label.includes('about')) {
@@ -245,15 +249,17 @@ _AUTOFILL_EVALUATE_JS = r"""
         let chosenVal = null;
         const options = Array.from(select.options);
 
-        const hasArgentina = options.find(o => o.text.trim().toLowerCase() === 'argentina' || o.text.includes('Argentina') || o.value.toLowerCase() === 'ar');
-        
+        const countryMatch = userCountry ? options.find(o => o.text.trim().toLowerCase() === userCountry || o.text.toLowerCase().includes(userCountry) || (o.value && o.value.toLowerCase() === userCountry.slice(0, 2))) : null;
+
         if (label.includes('país') || label.includes('pais') || label.includes('country') || label.includes('código de país') || label.includes('phone country') || label.includes('residencia') || label.includes('nationality') || label.includes('nacionalidad')) {
-            const opt = options.find(o => o.value.toLowerCase() === 'ar' || o.text.toLowerCase().includes('argentina') || o.text.includes('+54'));
-            if (opt) chosenVal = opt.value;
-        } else if (hasArgentina && !chosenVal && !select.value) {
-            chosenVal = hasArgentina.value;
+            if (countryMatch) chosenVal = countryMatch.value;
+        } else if (countryMatch && !chosenVal && !select.value) {
+            chosenVal = countryMatch.value;
         } else if (label.includes('ciudad') || label.includes('city') || label.includes('location') || label.includes('provincia') || label.includes('state')) {
-            const opt = options.find(o => o.text.toLowerCase().includes('buenos aires') || o.text.toLowerCase().includes('berisso') || o.text.toLowerCase().includes('la plata'));
+            const opt = options.find(o => {
+                const t = o.text.toLowerCase();
+                return (userCity && t.includes(userCity)) || (userState && t.includes(userState));
+            });
             if (opt) chosenVal = opt.value;
         } else if (label.includes('inglés') || label.includes('ingles') || label.includes('english') || label.includes('idioma') || label.includes('language')) {
             const profileEng = ((p.languages && p.languages.english) || 'Professional').toLowerCase();

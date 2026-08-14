@@ -6,55 +6,72 @@ from hawk.resume.generator import render_ats_resume_html, generate_tailored_pdf
 def test_render_ats_resume_html():
     profile_data = {
         "personal": {
-            "first_name": "Laureano",
-            "last_name": "Francisco Lamonega",
-            "email": "lflamonega@gmail.com",
-            "phone": "221 695 9945",
-            "city": "Berisso",
-            "country": "Argentina",
+            "first_name": "Alex",
+            "last_name": "Smith",
+            "email": "alex.smith@example.com",
+            "phone": "+1 555 0199",
+            "city": "Austin",
+            "country": "United States",
         },
         "links": {
-            "linkedin": "linkedin.com/in/lflamonega",
-            "github": "github.com/lflamonega",
+            "linkedin": "linkedin.com/in/alexsmith",
+            "github": "github.com/alexsmith",
         },
         "professional": {
-            "headline": "DevOps Engineer",
-            "summary": "Experienced DevOps Engineer with AWS and CI/CD background.",
+            "headline": "Systems Engineer",
+            "summary": "Experienced systems engineer with infrastructure and automation background.",
         },
         "education": {
             "degree": "Bachelor's",
-            "field": "Information Systems",
-            "school": "UNLP",
-            "graduation_year": "2027",
+            "field": "Computer Science",
+            "school": "State University",
+            "graduation_year": "2025",
         },
         "languages": {
-            "english": "Professional",
+            "english": "Native",
         },
+    }
+
+    resume_data = {
+        "experience_details": [
+            {
+                "position": "Infrastructure Engineer",
+                "company": "Tech Corp",
+                "employment_period": "2022 - Present",
+                "location": "Austin, TX",
+                "key_responsibilities": [
+                    {"description": "Automated deployment pipelines and server configurations."}
+                ],
+            }
+        ]
     }
 
     html = render_ats_resume_html(
         profile_data=profile_data,
-        job_title="Data Platform Engineer",
-        tailored_headline="Data Platform & DevOps Engineer",
-        tailored_summary="Tailored summary for data engineering role.",
-        highlighted_skills=["AWS", "Terraform", "CI/CD", "Docker"],
+        resume_data=resume_data,
+        job_title="DevOps Engineer",
+        tailored_headline="DevOps & Infrastructure Engineer",
+        tailored_summary="Experienced in CI/CD and cloud automation.",
+        highlighted_skills=["Docker", "Kubernetes", "CI/CD"],
     )
 
-    assert "Laureano Francisco Lamonega" in html
-    assert "Data Platform & DevOps Engineer" in html
-    assert "Tailored summary for data engineering role." in html
-    assert "AWS • Terraform • CI/CD • Docker" in html
-    assert "UNLP" in html
+    assert "Alex Smith" in html
+    assert "DevOps & Infrastructure Engineer" in html
+    assert "Experienced in CI/CD and cloud automation." in html
+    assert "Docker • Kubernetes • CI/CD" in html
+    assert "Tech Corp" in html
+    assert "Automated deployment pipelines" in html
+    assert "State University" in html
 
 
 @pytest.mark.asyncio
 async def test_generate_tailored_pdf(tmp_path):
     pdf_path = await generate_tailored_pdf(
-        job_id="test_unit_123",
-        job_title="DevOps Engineer",
-        tailored_headline="DevOps Specialist",
-        tailored_summary="Unit test summary.",
-        highlighted_skills=["Linux", "Docker", "AWS"],
+        job_id="test_unit_456",
+        job_title="Systems Engineer",
+        tailored_headline="Systems Specialist",
+        tailored_summary="Automated infrastructure expert.",
+        highlighted_skills=["Linux", "Python", "Docker"],
         output_dir=tmp_path,
     )
 

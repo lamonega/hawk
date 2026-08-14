@@ -1,131 +1,218 @@
-"""Tailored resume generation with ATS-optimized HTML/PDF output."""
+"""Truthful ATS-optimized resume generator reading directly from user configuration YAMLs."""
 
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+import yaml
 from loguru import logger
 
 from hawk.browser.pdf import html_to_pdf
-from hawk.profile import load_profile
+from hawk.profile import load_profile, RESUME_PATH, PROFILE_PATH
 from hawk.settings import PROJECT_ROOT
 
 
+def load_plain_text_resume(path: Path | None = None) -> dict[str, Any]:
+    """Load plain_text_resume.yaml safely."""
+    path = path or RESUME_PATH
+    if not path.exists():
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return yaml.safe_load(f) or {}
+    except Exception as e:
+        logger.warning("Could not read plain_text_resume.yaml at {}: {}", path, e)
+        return {}
+
+
 def render_ats_resume_html(
-    profile_data: dict[str, Any],
+    profile_data: dict[str, Any] | None = None,
+    resume_data: dict[str, Any] | None = None,
     job_title: str = "",
     tailored_headline: str = "",
     tailored_summary: str = "",
     highlighted_skills: list[str] | dict[str, list[str]] | None = None,
     custom_experience: list[dict[str, Any]] | None = None,
 ) -> str:
-    """Generate ATS-optimized clean HTML resume."""
-    personal = profile_data.get("personal", {})
-    links = profile_data.get("links", {})
-    prof = profile_data.get("professional", {})
-    educ = profile_data.get("education", {})
-    languages = profile_data.get("languages", {})
+    """Generate ATS-optimized clean HTML resume strictly using user-provided data.
 
-    first_name = personal.get("first_name", "")
-    last_name = personal.get("last_name", "")
-    full_name = f"{first_name} {last_name}".strip() or "Laureano Francisco Lamonega"
+    Never invents, fabricates, or hardcodes fake experience, bullets, skills, or personal info.
+    """
+    p = profile_data or {}
+    r = resume_data or {}
 
-    headline = tailored_headline or job_title or prof.get("headline", "DevOps Engineer")
-    summary = tailored_summary or prof.get("summary", "")
+    # Personal Info (prefer plain_text_resume YAML, fallback to profile YAML)
+    r_personal = r.get("personal_information", {})
+    p_personal = p.get("personal", {})
+    p_links = p.get("links", {})
+    p_prof = p.get("professional", {})
 
-    email = personal.get("email", "lflamonega@gmail.com")
-    phone = personal.get("phone", "+54 221 695 9945")
-    city = personal.get("city", "Berisso")
-    state = personal.get("state", "Buenos Aires")
-    country = personal.get("country", "Argentina")
-    location_str = f"{city}, {country}" if city else country
+    first_name = r_personal.get("name") or p_personal.get("first_name", "")
+    last_name = r_personal.get("surname") or p_personal.get("last_name", "")
+    full_name = f"{first_name} {last_name}".strip()
 
-    linkedin_url = links.get("linkedin", "linkedin.com/in/lflamonega")
-    github_url = links.get("github", "github.com/lflamonega")
+    email = r_personal.get("email") or p_personal.get("email", "")
+    phone = r_personal.get("phone") or p_personal.get("phone", "")
+    city = r_personal.get("city") or p_personal.get("city", "")
+    country = r_personal.get("country") or p_personal.get("country", "")
 
-    # Format skills section
+    location_parts = [part for part in (city, country) if part]
+    location_str = ", ".join(location_parts)
+
+    linkedin_url = r_personal.get("linkedin") or p_links.get("linkedin", "")
+    github_url = r_personal.get("github") or p_links.get("github", "")
+
+    headline = tailored_headline or p_prof.get("headline", "") or job_title
+    summary = tailored_summary or p_prof.get("summary", "")
+
+    # Header contacts
+    contact_items = []
+    if location_str:
+        contact_items.append(f"📍 {location_str}")
+    if email:
+        contact_items.append(f"✉️ {email}")
+    if phone:
+        contact_items.append(f"📞 {phone}")
+    if linkedin_url:
+        contact_items.append(f"🔗 {linkedin_url}")
+    if github_url:
+        contact_items.append(f"💻 {github_url}")
+    contact_html = " • ".join(contact_items)
+
+    # Skills section
     skills_html = ""
     if highlighted_skills:
         if isinstance(highlighted_skills, dict):
             categories_html = []
             for cat_name, skill_list in highlighted_skills.items():
-                items = ", ".join(skill_list)
-                categories_html.append(f"<p><strong>{cat_name}:</strong> {items}</p>")
+                if skill_list:
+                    items = ", ".join(str(s) for s in skill_list)
+                    categories_html.append(f"<p><strong>{cat_name}:</strong> {items}</p>")
             skills_html = "".join(categories_html)
-        elif isinstance(highlighted_skills, list):
-            items = " • ".join(highlighted_skills)
+        elif isinstance(highlighted_skills, list) and highlighted_skills:
+            items = " • ".join(str(s) for s in highlighted_skills)
             skills_html = f"<p>{items}</p>"
     else:
-        # Default skills based on profile
-        skills_html = """
-        <p><strong>Cloud & Infrastructure:</strong> AWS (EC2, EKS, S3, IAM, CloudWatch), Linux Server Administration, Virtualization (VMware, VirtualBox)</p>
-        <p><strong>CI/CD & Automation:</strong> GitHub Actions, Forgejo Actions, Docker, Bash/PowerShell Scripting, Terraform</p>
-        <p><strong>Web Servers & Monitoring:</strong> Nginx, Reverse Proxy Configuration, SSL/TLS, Nagios Monitoring, Prometheus</p>
-        """
+        raw_skills = p.get("skills", {})
+        if isinstance(raw_skills, dict) and raw_skills:
+            items = " • ".join(raw_skills.keys())
+            skills_html = f"<p>{items}</p>"
 
-    # Format experience section
-    exp_list = custom_experience or profile_data.get("experience", [])
-    exp_html = ""
-    if exp_list:
-        items = []
-        for exp in exp_list:
-            role = exp.get("position") or exp.get("role") or "DevOps Engineer"
-            comp = exp.get("company", "Municipalidad de Berisso")
-            period = exp.get("employment_period") or exp.get("period") or "2023 - Present"
-            loc = exp.get("location", "Buenos Aires, Argentina")
-            bullets = exp.get("key_responsibilities") or exp.get("bullets") or []
+    # Experience section (from custom_experience, or plain_text_resume, or profile)
+    exp_list = custom_experience or r.get("experience_details", []) or p.get("experience", [])
+    exp_items = []
 
-            bullets_html = ""
-            for b in bullets:
-                b_text = b.get("description", b) if isinstance(b, dict) else str(b)
-                bullets_html += f"<li>{b_text}</li>"
+    for exp in exp_list:
+        if not isinstance(exp, dict):
+            continue
+        role = exp.get("position") or exp.get("role") or ""
+        comp = exp.get("company", "")
+        period = exp.get("employment_period") or exp.get("period", "")
+        loc = exp.get("location", "")
 
-            items.append(f"""
-            <div class="entry">
-                <div class="entry-header">
-                    <span class="entry-title"><strong>{role}</strong> — {comp}</span>
-                    <span class="entry-date">{period}</span>
-                </div>
-                <div class="entry-sub">{loc}</div>
-                <ul class="entry-bullets">
-                    {bullets_html}
-                </ul>
-            </div>
-            """)
-        exp_html = "".join(items)
-    else:
-        # Default experience block from profile
-        exp_html = f"""
+        if not role and not comp:
+            continue
+
+        title_comp = f"<strong>{role}</strong>" + (f" — {comp}" if comp else "")
+
+        # Bullets / key responsibilities
+        raw_bullets = exp.get("key_responsibilities") or exp.get("bullets") or []
+        bullets_html = ""
+        for b in raw_bullets:
+            if isinstance(b, dict):
+                text = b.get("description", "")
+            else:
+                text = str(b).strip()
+            if text:
+                bullets_html += f"<li>{text}</li>"
+
+        sub_info = loc if loc else ""
+
+        exp_items.append(f"""
         <div class="entry">
             <div class="entry-header">
-                <span class="entry-title"><strong>DevOps Engineer</strong> — Municipalidad de Berisso</span>
-                <span class="entry-date">2023 - Present</span>
+                <span class="entry-title">{title_comp}</span>
+                {f'<span class="entry-date">{period}</span>' if period else ''}
             </div>
-            <div class="entry-sub">Buenos Aires, Argentina</div>
-            <ul class="entry-bullets">
-                <li>Designed and maintained automated CI/CD deployment pipelines using GitHub Actions and Forgejo Actions, increasing release reliability.</li>
-                <li>Containerized application workloads using Docker and configured Nginx reverse proxies with automated SSL certificates.</li>
-                <li>Administered Linux production servers, implemented monitoring and alerting with Nagios to ensure high availability.</li>
-                <li>Managed cloud infrastructure and automation using AWS (EC2, EKS) and Terraform Infrastructure-as-Code.</li>
-                <li>Developed automation scripts in PowerShell and Bash for system administration, backup routines, and routine maintenance.</li>
-            </ul>
+            {f'<div class="entry-sub">{sub_info}</div>' if sub_info else ''}
+            {f'<ul class="entry-bullets">{bullets_html}</ul>' if bullets_html else ''}
         </div>
-        """
+        """)
 
-    # Education block
-    degree = educ.get("degree", "Bachelor's")
-    field = educ.get("field", "Information Systems")
-    school = educ.get("school", "Facultad de Informática - UNLP")
-    grad_year = educ.get("graduation_year", "2027")
+    exp_html = "".join(exp_items)
 
-    # Languages block
+    # Education section
+    educ_list = r.get("education_details", [])
+    educ_items = []
+    if educ_list:
+        for ed in educ_list:
+            if not isinstance(ed, dict):
+                continue
+            lvl = ed.get("education_level", "")
+            field = ed.get("field_of_study", "")
+            inst = ed.get("institution", "")
+            grad = ed.get("year_of_completion", "")
+
+            title = f"{lvl} in {field}" if lvl and field else (lvl or field or inst)
+            sub = f" — {inst}" if inst and (lvl or field) else ""
+
+            if title or inst:
+                educ_items.append(f"""
+                <div class="education-entry">
+                    <span><strong>{title}</strong>{sub}</span>
+                    {f'<span class="entry-date">{grad}</span>' if grad else ''}
+                </div>
+                """)
+    else:
+        p_educ = p.get("education", {})
+        if isinstance(p_educ, dict) and p_educ:
+            deg = p_educ.get("degree", "")
+            fld = p_educ.get("field", "")
+            sch = p_educ.get("school", "")
+            yr = p_educ.get("graduation_year", "")
+            title = f"{deg} in {fld}" if deg and fld else (deg or fld or sch)
+            sub = f" — {sch}" if sch and (deg or fld) else ""
+            if title or sch:
+                educ_items.append(f"""
+                <div class="education-entry">
+                    <span><strong>{title}</strong>{sub}</span>
+                    {f'<span class="entry-date">{yr}</span>' if yr else ''}
+                </div>
+                """)
+    educ_html = "".join(educ_items)
+
+    # Languages section
+    r_langs = r.get("languages", [])
+    p_langs = p.get("languages", {})
     lang_items = []
-    for lang, level in languages.items():
-        lang_items.append(f"{lang.capitalize()} ({level})")
-    lang_str = ", ".join(lang_items) if lang_items else "Spanish (Native), English (Professional)"
+    if r_langs:
+        for l in r_langs:
+            if isinstance(l, dict):
+                lang_name = l.get("language", "")
+                prof = l.get("proficiency", "")
+                if lang_name:
+                    lang_items.append(f"{lang_name} ({prof})" if prof else lang_name)
+    elif p_langs:
+        for lang_name, prof in p_langs.items():
+            if lang_name:
+                lang_items.append(f"{lang_name.capitalize()} ({prof})" if prof else lang_name.capitalize())
+
+    lang_html = ", ".join(lang_items)
+
+    # Projects (if present in plain text resume)
+    projects_list = [pr for pr in r.get("projects", []) if isinstance(pr, dict) and (pr.get("name") or pr.get("description"))]
+    projects_html = ""
+    if projects_list:
+        p_items = []
+        for pr in projects_list:
+            p_name = pr.get("name", "")
+            p_desc = pr.get("description", "")
+            p_link = pr.get("link", "")
+            link_html = f' — <a href="{p_link}">{p_link}</a>' if p_link else ""
+            p_items.append(f"<p><strong>{p_name}</strong>{link_html}: {p_desc}</p>")
+        projects_html = "".join(p_items)
 
     html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -234,21 +321,16 @@ def render_ats_resume_html(
         display: flex;
         justify-content: space-between;
         font-size: 10pt;
+        margin-bottom: 4px;
     }}
 </style>
 </head>
 <body>
 
 <div class="header">
-    <div class="name">{full_name}</div>
-    <div class="headline">{headline}</div>
-    <div class="contact">
-        <span>📍 {location_str}</span> • 
-        <span>✉️ {email}</span> • 
-        <span>📞 {phone}</span> • 
-        <span>🔗 {linkedin_url}</span> • 
-        <span>💻 {github_url}</span>
-    </div>
+    {f'<div class="name">{full_name}</div>' if full_name else ''}
+    {f'<div class="headline">{headline}</div>' if headline else ''}
+    {f'<div class="contact">{contact_html}</div>' if contact_html else ''}
 </div>
 
 {f'''<div class="section">
@@ -256,30 +338,30 @@ def render_ats_resume_html(
     <div class="summary-text">{summary}</div>
 </div>''' if summary else ''}
 
-<div class="section">
+{f'''<div class="section">
     <div class="section-title">Technical Skills</div>
-    <div class="skills-block">
-        {skills_html}
-    </div>
-</div>
+    <div class="skills-block">{skills_html}</div>
+</div>''' if skills_html else ''}
 
-<div class="section">
+{f'''<div class="section">
     <div class="section-title">Work Experience</div>
     {exp_html}
-</div>
+</div>''' if exp_html else ''}
 
-<div class="section">
+{f'''<div class="section">
+    <div class="section-title">Projects</div>
+    <div class="skills-block">{projects_html}</div>
+</div>''' if projects_html else ''}
+
+{f'''<div class="section">
     <div class="section-title">Education</div>
-    <div class="education-entry">
-        <span><strong>{degree} in {field}</strong> — {school}</span>
-        <span class="entry-date">Expected {grad_year}</span>
-    </div>
-</div>
+    {educ_html}
+</div>''' if educ_html else ''}
 
-<div class="section">
+{f'''<div class="section">
     <div class="section-title">Languages</div>
-    <p style="font-size: 9.5pt; color: #2d3748;">{lang_str}</p>
-</div>
+    <p style="font-size: 9.5pt; color: #2d3748;">{lang_html}</p>
+</div>''' if lang_html else ''}
 
 </body>
 </html>"""
@@ -295,14 +377,14 @@ async def generate_tailored_pdf(
     custom_experience: list[dict[str, Any]] | None = None,
     output_dir: Path | None = None,
 ) -> str:
-    """Generate and save a tailored PDF resume for a specific job.
+    """Generate and save a tailored PDF resume for a specific job strictly from user YAML files.
 
     Args:
         job_id: Job ID used for naming output file.
         job_title: Target job title.
         tailored_headline: Headline tailored to the posting.
         tailored_summary: Professional summary tailored to match job requirements.
-        highlighted_skills: Specific skills to highlight.
+        highlighted_skills: Specific skills to highlight from user's skill set.
         custom_experience: Optional custom responsibilities tailored for the role.
         output_dir: Destination directory. Defaults to output/resumes.
 
@@ -311,9 +393,11 @@ async def generate_tailored_pdf(
     """
     profile = load_profile()
     profile_data = profile.model_dump()
+    resume_data = load_plain_text_resume()
 
     html = render_ats_resume_html(
         profile_data=profile_data,
+        resume_data=resume_data,
         job_title=job_title,
         tailored_headline=tailored_headline,
         tailored_summary=tailored_summary,
@@ -332,5 +416,5 @@ async def generate_tailored_pdf(
     if result.startswith("error"):
         raise RuntimeError(f"Failed to compile tailored PDF: {result}")
 
-    logger.info("Tailored resume generated at {}", pdf_path)
+    logger.info("Truthful resume generated at {}", pdf_path)
     return str(pdf_path.resolve())
