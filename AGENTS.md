@@ -13,20 +13,22 @@ and make decisions. hawk provides the browser automation, template rendering, an
 
 ```
 hawk/
-├── config/
-│   ├── profile.example.yaml          # Profile template
-│   ├── settings.example.yaml         # Settings template
-│   └── plain_text_resume.example.yaml# Plain text resume template
+├── data/                             # User personal configuration (100% ignored in Git)
+│   ├── profile.yaml                  # Active user profile
+│   └── settings.yaml                 # Active search & apply settings
 ├── hawk/
-│   ├── __init__.py                   # Package version (v0.14.1)
-│   ├── config.py                     # Centralized Pydantic models, settings & profile
+│   ├── __init__.py                   # Package version (v0.15.0)
+│   ├── config.py                     # Centralized Pydantic models & path management
 │   ├── browser.py                    # Playwright engine, stealth patches & DOM snapshot
 │   ├── linkedin.py                   # LinkedIn search, job extractor & Easy Apply engine
 │   ├── resume.py                     # ATS resume & cover letter compiler
+│   ├── onboarding.py                 # Interactive onboarding wizard & CV parser
 │   ├── storage.py                    # SQLite database storage (jobs, apps, daily limits)
 │   ├── mcp.py                        # FastMCP server with 12 high-level tools
-│   ├── cli.py                        # CLI entrypoint (doctor, mcp, run)
-│   └── templates/                    # Jinja2 templates (resume.html, cover_letter.html)
+│   ├── cli.py                        # CLI entrypoint (doctor, mcp, run, onboard)
+│   └── templates/                    # Jinja2 & schema templates
+│       ├── html/                     # HTML ATS templates (resume.html, cover_letter.html)
+│       └── yaml/                     # Schema templates (profile.example.yaml, settings.example.yaml)
 ├── pyproject.toml                    # Package metadata & dependencies
 └── README.md                         # Documentation
 ```

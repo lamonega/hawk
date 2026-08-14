@@ -29,6 +29,6 @@ apply:
   max_delay: 6.0
   dry_run: true
 browser:
-  profile_dir: profiles/linkedin
+  profile_dir: data/browser
   stealth: false
   headless: false

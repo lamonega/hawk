@@ -15,7 +15,6 @@ from hawk.config import (
     load_profile,
     query_knowledge_base,
     save_profile,
-    sync_profile_to_resume,
 )
 from hawk.linkedin import (
     MAX_NOTE_LENGTH,
@@ -518,6 +517,7 @@ async def hawk_generate_document(
             pdf_path = await generate_tailored_pdf(
                 job_id=clean_job_id,
                 job_title=clean_job_title,
+                company=clean_company,
                 tailored_headline=tailored_headline.strip(),
                 tailored_summary=tailored_summary.strip(),
                 highlighted_skills=skills_list,
@@ -627,10 +627,10 @@ async def hawk_profile(
             return _to_json(kb_result)
 
         elif act == "sync":
-            sync_profile_to_resume(profile)
+            save_profile(profile)
             return _to_json({
                 "status": "synced",
-                "message": "Successfully synchronized profile to plain_text_resume.yaml",
+                "message": "Candidate profile is unified and saved in profile.yaml",
             })
 
         return _error_json(

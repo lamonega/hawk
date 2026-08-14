@@ -1,30 +1,76 @@
-"""ATS-optimized resume and cover letter generation using Jinja2 templates and Playwright PDF rendering."""
-
 from __future__ import annotations
 
 from pathlib import Path
+import re
 from typing import Any
 
 from jinja2 import Environment, FileSystemLoader
 
 from hawk.browser import browser
-from hawk.config import PROJECT_ROOT, RESUME_EXAMPLE_PATH, RESUME_PATH, _read_yaml, load_profile
+from hawk.config import (
+    DATA_DIR,
+    PROJECT_ROOT,
+    TEMPLATES_HTML_DIR,
+    _read_yaml,
+    load_profile,
+)
 
 # ── Constants & Configuration ────────────────────────────────────────────────
 
-TEMPLATES_DIR: Path = Path(__file__).resolve().parent / "templates"
-RESUMES_OUTPUT_DIR: Path = PROJECT_ROOT / "output" / "resumes"
-COVER_LETTERS_OUTPUT_DIR: Path = PROJECT_ROOT / "output" / "cover_letters"
+TEMPLATES_DIR: Path = (
+    TEMPLATES_HTML_DIR
+    if TEMPLATES_HTML_DIR.exists()
+    else (Path(__file__).resolve().parent / "templates")
+)
+RESUMES_OUTPUT_DIR: Path = DATA_DIR / "resumes"
+COVER_LETTERS_OUTPUT_DIR: Path = DATA_DIR / "cover_letters"
 
 RESUME_TEMPLATE_NAME: str = "resume.html"
 COVER_LETTER_TEMPLATE_NAME: str = "cover_letter.html"
 
-RESUME_PDF_PATTERN: str = "resume_{job_id}.pdf"
-COVER_LETTER_PDF_PATTERN: str = "cover_letter_{job_id}.pdf"
-
 LANG_AUTO: str = "auto"
 LANG_ES: str = "es"
 LANG_EN: str = "en"
+
+
+def sanitize_filename_part(text: str) -> str:
+    """Normalize and sanitize text for safe cross-platform filenames."""
+    if not text:
+        return ""
+    # Replace non-alphanumeric characters with underscores
+    cleaned = re.sub(r"[^\w\-]+", "_", text.strip())
+    # Collapse multiple consecutive underscores
+    cleaned = re.sub(r"_+", "_", cleaned).strip("_")
+    return cleaned
+
+
+def build_document_filename(
+    doc_type: str,
+    company: str = "",
+    job_id: str = "",
+    profile_data: dict[str, Any] | None = None,
+) -> str:
+    """Build standardized document filename: <first_name>_<last_name>_<doc_type>_<company>.pdf.
+
+    Examples:
+        - Alex_Taylor_CV_Google.pdf
+        - Alex_Taylor_Cover_Letter_Google.pdf
+    """
+    p = profile_data or load_profile().model_dump()
+    personal = p.get("personal") or {}
+    first_name = sanitize_filename_part(personal.get("first_name") or "Candidate")
+    last_name = sanitize_filename_part(personal.get("last_name") or "")
+
+    name_part = f"{first_name}_{last_name}".strip("_") if last_name else first_name
+    doc_label = "Cover_Letter" if doc_type in ("cover_letter", "letter") else "CV"
+
+    company_clean = sanitize_filename_part(company)
+    if not company_clean and job_id:
+        company_clean = sanitize_filename_part(f"Job_{job_id}")
+
+    if company_clean:
+        return f"{name_part}_{doc_label}_{company_clean}.pdf"
+    return f"{name_part}_{doc_label}.pdf"
 
 # Maximum number of skills to surface when building a fallback cover letter body
 _TOP_SKILLS_COUNT: int = 4
@@ -92,25 +138,22 @@ _BODY_HEADLINE_EN: str = "With my background as {headline}, I bring dedicated pr
 _BODY_SKILLS_EN: str = "With demonstrated expertise in {top_skills}, I can deliver immediate value to your engineering initiatives."
 _BODY_GENERIC_EN: str = "My professional background and skill set align with the qualifications outlined for this position."
 
+_TEMPLATE_SEARCH_PATHS: list[str] = [
+    str(TEMPLATES_HTML_DIR),
+    str(TEMPLATES_HTML_DIR.parent),
+    str(PROJECT_ROOT / "templates" / "html"),
+    str(PROJECT_ROOT / "templates"),
+    str(Path(__file__).resolve().parent / "templates" / "html"),
+    str(Path(__file__).resolve().parent / "templates"),
+]
+
 _jinja_env: Environment = Environment(
-    loader=FileSystemLoader(str(TEMPLATES_DIR)),
+    loader=FileSystemLoader([p for p in _TEMPLATE_SEARCH_PATHS if Path(p).exists()]),
     autoescape=True,
 )
 
 
-# ── Helpers ──────────────────────────────────────────────────────────────────
-
-def load_plain_text_resume(path: Path | None = None) -> dict[str, Any]:
-    """Load plain_text_resume.yaml or plain_text_resume.example.yaml fallback.
-
-    Args:
-        path: Optional explicit path to resume YAML.
-
-    Returns:
-        Dictionary with parsed resume data.
-    """
-    target = path or (RESUME_PATH if RESUME_PATH.exists() else RESUME_EXAMPLE_PATH)
-    return _read_yaml(target)
+# ── Language Detection ────────────────────────────────────────────────────────
 
 
 def detect_is_spanish(language: str = LANG_AUTO, *text_samples: str) -> bool:
@@ -134,22 +177,17 @@ def detect_is_spanish(language: str = LANG_AUTO, *text_samples: str) -> bool:
 
 def _extract_contact_info(
     profile_data: dict[str, Any] | None = None,
-    resume_data: dict[str, Any] | None = None,
 ) -> dict[str, str]:
-    """Extract unified candidate contact details from profile and resume dicts.
+    """Extract unified candidate contact details from profile dictionary.
 
     Args:
         profile_data: Raw profile dictionary.
-        resume_data: Raw plain text resume dictionary.
 
     Returns:
         Normalized dictionary with full_name, location, email, phone, linkedin, and github.
     """
     p = profile_data or {}
-    r = resume_data or {}
-    personal_r = r.get("personal_information") or {}
-    personal_p = p.get("personal") or {}
-    personal = {**personal_p, **personal_r}
+    personal = p.get("personal") or {}
 
     first_name = personal.get("first_name") or personal.get("name") or ""
     last_name = personal.get("last_name") or personal.get("surname") or ""
@@ -207,24 +245,16 @@ def _extract_skills(
 
 def _extract_education(
     profile_data: dict[str, Any] | None = None,
-    resume_data: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
-    """Extract normalized education entries from plain text resume or candidate profile.
+    """Extract normalized education entries from candidate profile.
 
     Args:
         profile_data: Raw profile dictionary.
-        resume_data: Raw plain text resume dictionary.
 
     Returns:
         List of normalized education dictionaries.
     """
-    r = resume_data or {}
     p = profile_data or {}
-
-    edu_details = r.get("education_details")
-    if isinstance(edu_details, list) and edu_details:
-        return edu_details
-
     edu = p.get("education")
     if isinstance(edu, dict) and any(edu.values()):
         return [{
@@ -239,23 +269,20 @@ def _extract_education(
 def _extract_experience(
     custom_experience: list[dict[str, Any]] | None = None,
     profile_data: dict[str, Any] | None = None,
-    resume_data: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
-    """Extract normalized experience entries from custom overrides, resume, or profile.
+    """Extract normalized experience entries from custom overrides or profile.
 
     Args:
         custom_experience: Optional customized experience entries.
         profile_data: Raw profile dictionary.
-        resume_data: Raw plain text resume dictionary.
 
     Returns:
         List of experience dictionaries.
     """
     if custom_experience:
         return custom_experience
-    r = resume_data or {}
     p = profile_data or {}
-    return r.get("experience_details") or p.get("experience") or []
+    return p.get("experience") or []
 
 
 def _select_cover_letter_body(
@@ -375,7 +402,6 @@ def _build_salutation(hiring_manager: str, company: str, is_es: bool) -> str:
 
 def render_ats_resume_html(
     profile_data: dict[str, Any] | None = None,
-    resume_data: dict[str, Any] | None = None,
     job_title: str = "",
     tailored_headline: str = "",
     tailored_summary: str = "",
@@ -383,15 +409,14 @@ def render_ats_resume_html(
     custom_experience: list[dict[str, Any]] | None = None,
     language: str = LANG_AUTO,
 ) -> str:
-    """Render ATS-compliant resume HTML from profile data and tailored inputs.
+    """Render ATS-compliant resume HTML using candidate profile data.
 
     Args:
         profile_data: Optional candidate profile dict (defaults to loaded profile).
-        resume_data: Optional plain text resume dict (defaults to loaded resume).
-        job_title: Target job title.
-        tailored_headline: Tailored professional headline.
-        tailored_summary: Tailored professional summary narrative.
-        highlighted_skills: List or dictionary of highlighted skills for the role.
+        job_title: Applied job title.
+        tailored_headline: Dynamically generated role-specific headline.
+        tailored_summary: Dynamically generated tailored summary.
+        highlighted_skills: List or dict of skills to emphasize.
         custom_experience: Optional customized experience entries.
         language: Language code ('en', 'es', or 'auto').
 
@@ -399,12 +424,11 @@ def render_ats_resume_html(
         Rendered HTML string.
     """
     p = profile_data or load_profile().model_dump()
-    r = resume_data or load_plain_text_resume()
 
-    contact = _extract_contact_info(profile_data=p, resume_data=r)
+    contact = _extract_contact_info(profile_data=p)
     skills = _extract_skills(highlighted_skills=highlighted_skills, profile_skills=p.get("skills"))
-    exp = _extract_experience(custom_experience=custom_experience, profile_data=p, resume_data=r)
-    edu = _extract_education(profile_data=p, resume_data=r)
+    exp = _extract_experience(custom_experience=custom_experience, profile_data=p)
+    edu = _extract_education(profile_data=p)
 
     is_es = detect_is_spanish(language, job_title, tailored_headline)
     lang_code = LANG_ES if is_es else LANG_EN
@@ -499,31 +523,37 @@ async def _render_doc_pdf(html: str, out_path: Path) -> str:
 async def generate_tailored_pdf(
     job_id: str,
     job_title: str,
+    company: str = "",
     tailored_headline: str = "",
     tailored_summary: str = "",
     highlighted_skills: list[str] | None = None,
     custom_experience: list[dict[str, Any]] | None = None,
     language: str = LANG_AUTO,
     output_dir: Path | None = None,
+    profile_data: dict[str, Any] | None = None,
 ) -> str:
-    """Generate ATS PDF resume and save to output/resumes/resume_{job_id}.pdf.
+    """Generate ATS PDF resume and save to data/resumes/<first_name>_<last_name>_CV_<company>.pdf.
 
     Args:
         job_id: LinkedIn or target job identifier.
         job_title: Target job title.
+        company: Target hiring company name.
         tailored_headline: Tailored headline for candidate header.
         tailored_summary: Tailored professional summary narrative.
         highlighted_skills: List of highlighted skills for this application.
         custom_experience: Custom experience entries.
         language: Target document language ('en', 'es', or 'auto').
         output_dir: Optional custom output directory.
+        profile_data: Optional candidate profile dict.
 
     Returns:
         Absolute string path to rendered PDF file.
     """
-    filename = RESUME_PDF_PATTERN.format(job_id=job_id)
+    p = profile_data or load_profile().model_dump()
+    filename = build_document_filename(doc_type="cv", company=company, job_id=job_id, profile_data=p)
     out_path = (output_dir or RESUMES_OUTPUT_DIR) / filename
     html = render_ats_resume_html(
+        profile_data=p,
         job_title=job_title,
         tailored_headline=tailored_headline,
         tailored_summary=tailored_summary,
@@ -537,13 +567,14 @@ async def generate_tailored_pdf(
 async def generate_tailored_cover_letter(
     job_id: str,
     job_title: str,
-    company: str,
+    company: str = "",
     hiring_manager: str = "",
     tailored_body: list[str] | str | None = None,
     language: str = LANG_AUTO,
     output_dir: Path | None = None,
+    profile_data: dict[str, Any] | None = None,
 ) -> str:
-    """Generate ATS PDF cover letter and save to output/cover_letters/cover_letter_{job_id}.pdf.
+    """Generate ATS PDF cover letter and save to data/cover_letters/<first_name>_<last_name>_Cover_Letter_<company>.pdf.
 
     Args:
         job_id: LinkedIn or target job identifier.
@@ -553,13 +584,16 @@ async def generate_tailored_cover_letter(
         tailored_body: Paragraph list or raw body text.
         language: Target document language ('en', 'es', or 'auto').
         output_dir: Optional custom output directory.
+        profile_data: Optional candidate profile dict.
 
     Returns:
         Absolute string path to rendered PDF file.
     """
-    filename = COVER_LETTER_PDF_PATTERN.format(job_id=job_id)
+    p = profile_data or load_profile().model_dump()
+    filename = build_document_filename(doc_type="cover_letter", company=company, job_id=job_id, profile_data=p)
     out_path = (output_dir or COVER_LETTERS_OUTPUT_DIR) / filename
     html = render_ats_cover_letter_html(
+        profile_data=p,
         job_title=job_title,
         company=company,
         hiring_manager=hiring_manager,

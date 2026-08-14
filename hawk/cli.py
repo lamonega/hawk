@@ -12,13 +12,14 @@ import click
 from loguru import logger
 
 from hawk.config import (
+    DATA_DIR,
     PROFILE_EXAMPLE_PATH,
     PROFILE_PATH,
     PROJECT_ROOT,
-    RESUME_EXAMPLE_PATH,
-    RESUME_PATH,
     SETTINGS_EXAMPLE_PATH,
     SETTINGS_PATH,
+    TEMPLATES_HTML_DIR,
+    TEMPLATES_YAML_DIR,
     get_settings,
 )
 
@@ -70,7 +71,6 @@ _DEFAULT_MAX_JOBS = 3
 _CONFIG_FILE_CHECKS: list[tuple[str, Path, Path]] = [
     ("Settings", SETTINGS_PATH, SETTINGS_EXAMPLE_PATH),
     ("Profile", PROFILE_PATH, PROFILE_EXAMPLE_PATH),
-    ("Resume", RESUME_PATH, RESUME_EXAMPLE_PATH),
 ]
 
 
@@ -113,6 +113,11 @@ def doctor() -> None:
             active_path.exists() or example_path.exists(),
         ))
 
+    # Templates & Data directories presence.
+    checks.append(("HTML templates directory (templates/html/)", TEMPLATES_HTML_DIR.exists()))
+    checks.append(("YAML templates directory (templates/yaml/)", TEMPLATES_YAML_DIR.exists()))
+    checks.append(("Personal data directory (data/)", DATA_DIR.exists()))
+
     # SQLite database connectivity.
     db_ok = False
     try:
@@ -125,9 +130,10 @@ def doctor() -> None:
 
     # Browser profile directory accessibility.
     prof_dir = PROJECT_ROOT / settings.browser.profile_dir
+    prof_dir.parent.mkdir(parents=True, exist_ok=True)
     checks.append((
         "Browser profile directory accessible",
-        prof_dir.exists() or prof_dir.parent.exists(),
+        prof_dir.parent.exists(),
     ))
 
     # Playwright package availability.
@@ -150,6 +156,16 @@ def doctor() -> None:
         summary = "\nSome checks failed.\n"
         color = "yellow"
     click.echo(click.style(summary, fg=color))
+
+
+# ── onboard ───────────────────────────────────────────────────────────────────
+
+
+@main.command()
+def onboard() -> None:
+    """Run interactive onboarding wizard to configure profile and search preferences."""
+    from hawk.onboarding import run_interactive_onboarding
+    run_interactive_onboarding()
 
 
 # ── mcp ───────────────────────────────────────────────────────────────────────

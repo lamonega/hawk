@@ -15,21 +15,21 @@ from pydantic import BaseModel, Field
 # ── Paths & Filenames ────────────────────────────────────────────────────────
 
 PROJECT_ROOT: Path = Path(__file__).resolve().parent.parent
-CONFIG_DIR: Path = PROJECT_ROOT / "config"
+PACKAGE_DIR: Path = Path(__file__).resolve().parent
+DATA_DIR: Path = PROJECT_ROOT / "data"
+TEMPLATES_DIR: Path = PACKAGE_DIR / "templates"
+TEMPLATES_HTML_DIR: Path = TEMPLATES_DIR / "html"
+TEMPLATES_YAML_DIR: Path = TEMPLATES_DIR / "yaml"
 
 SETTINGS_FILENAME: str = "settings.yaml"
 SETTINGS_EXAMPLE_FILENAME: str = "settings.example.yaml"
 PROFILE_FILENAME: str = "profile.yaml"
 PROFILE_EXAMPLE_FILENAME: str = "profile.example.yaml"
-RESUME_FILENAME: str = "plain_text_resume.yaml"
-RESUME_EXAMPLE_FILENAME: str = "plain_text_resume.example.yaml"
 
-SETTINGS_PATH: Path = CONFIG_DIR / SETTINGS_FILENAME
-SETTINGS_EXAMPLE_PATH: Path = CONFIG_DIR / SETTINGS_EXAMPLE_FILENAME
-PROFILE_PATH: Path = CONFIG_DIR / PROFILE_FILENAME
-PROFILE_EXAMPLE_PATH: Path = CONFIG_DIR / PROFILE_EXAMPLE_FILENAME
-RESUME_PATH: Path = CONFIG_DIR / RESUME_FILENAME
-RESUME_EXAMPLE_PATH: Path = CONFIG_DIR / RESUME_EXAMPLE_FILENAME
+SETTINGS_PATH: Path = DATA_DIR / SETTINGS_FILENAME
+SETTINGS_EXAMPLE_PATH: Path = TEMPLATES_YAML_DIR / SETTINGS_EXAMPLE_FILENAME
+PROFILE_PATH: Path = DATA_DIR / PROFILE_FILENAME
+PROFILE_EXAMPLE_PATH: Path = TEMPLATES_YAML_DIR / PROFILE_EXAMPLE_FILENAME
 
 # ── Constants & Defaults ─────────────────────────────────────────────────────
 
@@ -38,7 +38,7 @@ DEFAULT_MIN_SCORE: int = 7
 DEFAULT_DAILY_MAX: int = 10
 DEFAULT_MIN_DELAY: float = 2.0
 DEFAULT_MAX_DELAY: float = 5.0
-DEFAULT_PROFILE_DIR: str = "profiles/linkedin"
+DEFAULT_PROFILE_DIR: str = "data/browser"
 DEFAULT_CURRENCY: str = "USD"
 DEFAULT_TIMEZONE_OVERLAP_HOURS: int = 4
 DEFAULT_DATE_FILTER: str = "month"
@@ -67,26 +67,6 @@ DEFAULT_JOB_TYPES: dict[str, bool] = {
     "internship": False,
     "other": False,
     "volunteer": False,
-}
-
-# Mapping of plain_text_resume personal keys to UserProfile attribute paths
-PERSONAL_TO_RESUME_MAP: dict[str, str] = {
-    "name": "personal.first_name",
-    "surname": "personal.last_name",
-    "city": "personal.city",
-    "country": "personal.country",
-    "zip_code": "personal.postal_code",
-    "email": "personal.email",
-    "phone": "personal.phone",
-    "github": "links.github",
-    "linkedin": "links.linkedin",
-}
-
-# Mapping of plain_text_resume education keys to UserProfile attribute paths
-EDUCATION_TO_RESUME_MAP: dict[str, str] = {
-    "education_level": "education.degree",
-    "institution": "education.school",
-    "field_of_study": "education.field",
 }
 
 _CLEAN_KEY_REGEX: re.Pattern[str] = re.compile(r"[^a-z0-9\s]")
@@ -172,45 +152,44 @@ _cached_settings: Settings | None = None
 _cached_settings_mtime: float = 0.0
 
 
-def load_settings(config_dir: Path | None = None) -> Settings:
-    """Load settings from config/settings.yaml with fallback to settings.example.yaml."""
-    cfg_dir = config_dir or CONFIG_DIR
-    target = cfg_dir / SETTINGS_FILENAME
+def load_settings(data_dir: Path | None = None) -> Settings:
+    """Load settings from data/settings.yaml with fallback to templates/yaml/settings.example.yaml."""
+    target = (data_dir / SETTINGS_FILENAME) if data_dir else SETTINGS_PATH
     if not target.exists():
-        target = cfg_dir / SETTINGS_EXAMPLE_FILENAME
+        target = SETTINGS_EXAMPLE_PATH
     data = read_yaml(target)
     return Settings(**data)
 
 
-def get_settings(config_dir: Path | None = None) -> Settings:
+def get_settings(data_dir: Path | None = None) -> Settings:
     """Get cached settings with automatic reload when the file is modified on disk."""
     global _cached_settings, _cached_settings_mtime
-    cfg_dir = config_dir or CONFIG_DIR
-    target = cfg_dir / SETTINGS_FILENAME
+    target = (data_dir / SETTINGS_FILENAME) if data_dir else SETTINGS_PATH
     if not target.exists():
-        target = cfg_dir / SETTINGS_EXAMPLE_FILENAME
+        target = SETTINGS_EXAMPLE_PATH
 
     try:
         mtime = target.stat().st_mtime if target.exists() else 0.0
     except Exception:
         mtime = 0.0
 
-    if _cached_settings is None or mtime > _cached_settings_mtime or config_dir is not None:
-        settings = load_settings(config_dir)
-        if config_dir is None:
+    if _cached_settings is None or mtime > _cached_settings_mtime or data_dir is not None:
+        settings = load_settings(data_dir)
+        if data_dir is None:
             _cached_settings = settings
             _cached_settings_mtime = mtime
         return settings
     return _cached_settings
 
 
-def save_settings(settings: Settings, config_dir: Path | None = None) -> None:
-    """Save settings to config/settings.yaml and update cached instance."""
+def save_settings(settings: Settings, data_dir: Path | None = None) -> None:
+    """Save settings to data/settings.yaml and update cached instance."""
     global _cached_settings, _cached_settings_mtime
-    cfg_dir = config_dir or CONFIG_DIR
-    target = cfg_dir / SETTINGS_FILENAME
+    d_dir = data_dir or DATA_DIR
+    d_dir.mkdir(parents=True, exist_ok=True)
+    target = d_dir / SETTINGS_FILENAME
     write_yaml(target, settings.model_dump())
-    if config_dir is None:
+    if data_dir is None:
         _cached_settings = settings
         try:
             _cached_settings_mtime = target.stat().st_mtime
@@ -381,7 +360,7 @@ class UserProfile(BaseModel):
 
 
 def load_profile(path: Path | None = None) -> UserProfile:
-    """Load user profile from config/profile.yaml with fallback to profile.example.yaml."""
+    """Load user profile from data/profile.yaml with fallback to templates/yaml/profile.example.yaml."""
     if path is None:
         path = PROFILE_PATH if PROFILE_PATH.exists() else PROFILE_EXAMPLE_PATH
     data = read_yaml(path)
@@ -397,13 +376,11 @@ def load_profile(path: Path | None = None) -> UserProfile:
     return UserProfile(**data)
 
 
-def save_profile(profile: UserProfile, path: Path | None = None, sync_resume: bool = True) -> None:
-    """Save user profile to YAML and optionally synchronize plain text resume."""
+def save_profile(profile: UserProfile, path: Path | None = None) -> None:
+    """Save user profile to data/profile.yaml."""
     target_path = path or PROFILE_PATH
+    target_path.parent.mkdir(parents=True, exist_ok=True)
     write_yaml(target_path, profile.model_dump())
-    if sync_resume:
-        resume_target = (target_path.parent / RESUME_FILENAME) if path else RESUME_PATH
-        sync_profile_to_resume(profile, resume_path=resume_target)
 
 
 def get_profile_value(profile: UserProfile, field_path: str) -> str:
@@ -420,59 +397,6 @@ def get_profile_value(profile: UserProfile, field_path: str) -> str:
     if isinstance(obj, (BaseModel, list, dict)):
         return ""
     return str(obj) if obj is not None else ""
-
-
-def sync_profile_to_resume(profile: UserProfile, resume_path: Path | None = None) -> None:
-    """Synchronize UserProfile into plain_text_resume.yaml following DRY principles."""
-    target_path = resume_path or RESUME_PATH
-    source = target_path if target_path.exists() else (target_path.parent / RESUME_EXAMPLE_FILENAME)
-    data = read_yaml(source)
-
-    # 1. Sync personal information
-    personal = data.get("personal_information") or {}
-    for resume_key, profile_key in PERSONAL_TO_RESUME_MAP.items():
-        val = get_profile_value(profile, profile_key)
-        if val:
-            personal[resume_key] = val
-    data["personal_information"] = personal
-
-    # 2. Sync education details
-    if profile.education.degree or profile.education.school:
-        edu_list = data.get("education_details") or [{}]
-        edu = edu_list[0] if isinstance(edu_list[0], dict) else {}
-        for resume_key, profile_key in EDUCATION_TO_RESUME_MAP.items():
-            val = get_profile_value(profile, profile_key)
-            if val:
-                edu[resume_key] = val
-
-        if profile.education.graduation_year:
-            grad_year = profile.education.graduation_year.strip()
-            edu["year_of_completion"] = int(grad_year) if grad_year.isdigit() else grad_year
-
-        edu_list[0] = edu
-        data["education_details"] = edu_list
-
-    # 3. Sync experience details
-    if profile.experience:
-        data["experience_details"] = profile.experience
-    elif profile.professional.current_title or profile.professional.current_company:
-        exp_list = data.get("experience_details") or [{}]
-        exp = exp_list[0] if isinstance(exp_list[0], dict) else {}
-        if profile.professional.current_title:
-            exp["position"] = profile.professional.current_title
-        if profile.professional.current_company:
-            exp["company"] = profile.professional.current_company
-        if profile.professional.summary:
-            exp["key_responsibilities"] = [{"description": profile.professional.summary}]
-        exp_list[0] = exp
-        data["experience_details"] = exp_list
-
-    # 4. Sync languages
-    if profile.languages:
-        data["languages"] = [
-            {"language": lang.capitalize(), "proficiency": str(lvl)}
-            for lang, lvl in profile.languages.items()
-        ]
 
     # Ensure required plain text resume lists exist
     for key in ("projects", "achievements", "certifications", "interests"):

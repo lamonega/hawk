@@ -20,10 +20,10 @@ output/
 *.db-shm
 log/
 
-# Personal config
-config/settings.yaml
-config/profile.yaml
-config/plain_text_resume.yaml
+# Personal user data (100% ignored)
+data/*
+!data/.gitkeep
+config/
 
 # IDE
 .vscode/

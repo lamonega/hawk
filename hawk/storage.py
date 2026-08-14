@@ -12,7 +12,7 @@ from typing import Any
 
 from loguru import logger
 
-from hawk.config import PROJECT_ROOT
+from hawk.config import DATA_DIR, PROJECT_ROOT
 
 __all__ = [
     "DEFAULT_APPLICATION_STATUS",
@@ -24,6 +24,7 @@ __all__ = [
     "get_daily_count",
     "get_db_path",
     "get_job",
+    "get_today_count",
     "increment_daily_count",
     "init_db",
     "insert_application",
@@ -33,7 +34,7 @@ __all__ = [
 # ── Database & Application Constants ──────────────────────────────────────────
 
 DEFAULT_DB_NAME: str = "hawk.db"
-DEFAULT_OUTPUT_DIR: Path = PROJECT_ROOT / "output"
+DEFAULT_OUTPUT_DIR: Path = DATA_DIR
 DEFAULT_APPLICATION_STATUS: str = "applied"
 DEFAULT_SCHEMA_STATUS: str = "pending"
 DATE_FORMAT: str = "%Y-%m-%d"
