@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="{{ language }}">
+<head>
+    <meta charset="UTF-8">
+    <title>{{ full_name }} - Cover Letter</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            color: #1a1a1a;
+            line-height: 1.6;
+            font-size: 11pt;
+            background: #ffffff;
+            padding: 36px 40px;
+        }
+        header { border-bottom: 2px solid #2563eb; padding-bottom: 12px; margin-bottom: 24px; }
+        h1 { font-size: 22pt; font-weight: 700; color: #0f172a; margin-bottom: 4px; }
+        .headline { font-size: 11pt; font-weight: 600; color: #2563eb; margin-bottom: 6px; }
+        .contact { font-size: 9.5pt; color: #475569; display: flex; flex-wrap: wrap; gap: 8px; }
+        .contact span:not(:last-child)::after { content: " •"; color: #94a3b8; margin-left: 8px; }
+        .recipient { margin-bottom: 20px; color: #334155; font-size: 10.5pt; }
+        .salutation { font-weight: 600; color: #0f172a; margin-bottom: 14px; }
+        .body-text p { margin-bottom: 14px; text-align: justify; color: #334155; }
+        .signoff { margin-top: 24px; color: #0f172a; font-weight: 500; }
+        .signature-name { margin-top: 16px; font-weight: 700; font-size: 12pt; color: #0f172a; }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>{{ full_name }}</h1>
+        {% if headline %}<div class="headline">{{ headline }}</div>{% endif %}
+        <div class="contact">
+            {% if location %}<span>{{ location }}</span>{% endif %}
+            {% if email %}<span>{{ email }}</span>{% endif %}
+            {% if phone %}<span>{{ phone }}</span>{% endif %}
+            {% if linkedin %}<span>{{ linkedin }}</span>{% endif %}
+        </div>
+    </header>
+
+    <div class="recipient">
+        {% if hiring_manager %}<div>Attn: {{ hiring_manager }}</div>{% endif %}
+        {% if company %}<div>{{ company }}</div>{% endif %}
+        <div>Application for: <strong>{{ job_title }}</strong></div>
+    </div>
+
+    <div class="salutation">{{ salutation }}</div>
+
+    <div class="body-text">
+        {% for paragraph in paragraphs %}
+        <p>{{ paragraph }}</p>
+        {% endfor %}
+    </div>
+
+    <div class="signoff">
+        <div>{{ signoff_text }}</div>
+        <div class="signature-name">{{ full_name }}</div>
+    </div>
+</body>
+</html>
