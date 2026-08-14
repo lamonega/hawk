@@ -13,7 +13,7 @@ from typing import Any
 
 from loguru import logger
 
-from hawk.browser.driver import get_page, save_session
+from hawk.browser.driver import get_page, save_session, dismiss_guest_overlays
 from hawk.settings import get_settings
 
 SCREENSHOT_DIR = Path("output/screenshots")
@@ -425,6 +425,8 @@ async def wait_for_jobs() -> None:
     if not page:
         return
 
+    await dismiss_guest_overlays(page)
+
     job_selectors = [
         '[data-testid="lazy-column"]',
         '#lazy-column',
@@ -775,6 +777,8 @@ async def extract_job_details() -> str:
     if page is None:
         return json.dumps({"error": "Browser not started"})
 
+    await dismiss_guest_overlays(page)
+
     # Try to expand truncated description ("Show more" / "Ver más")
     try:
         await page.evaluate("""
@@ -985,6 +989,7 @@ async def click_easy_apply() -> str:
     if page is None:
         return "error: Browser not started"
 
+    await dismiss_guest_overlays(page)
     await _take_debug_screenshot("easy_apply_before_click")
 
     selectors = [

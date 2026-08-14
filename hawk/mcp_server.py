@@ -56,6 +56,24 @@ async def browser_check_session() -> str:
 
 
 @server.tool()
+async def browser_wait_for_login(timeout: int = 120) -> str:
+    """Wait actively for the user to complete LinkedIn login in the browser window.
+
+    Checks for the authentication session cookie and interface elements,
+    then automatically saves the session state once logged in.
+
+    Args:
+        timeout: Maximum seconds to wait (default 120).
+
+    Returns:
+        'logged_in', 'timeout: ...', or error message.
+    """
+    from hawk.browser.driver import wait_for_login
+
+    return await wait_for_login(timeout=timeout)
+
+
+@server.tool()
 async def browser_navigate(url: str) -> str:
     """Navigate the browser to a URL.
 
@@ -65,7 +83,7 @@ async def browser_navigate(url: str) -> str:
     Returns:
         The page title and URL after navigation.
     """
-    from hawk.browser.driver import get_page
+    from hawk.browser.driver import get_page, dismiss_guest_overlays
 
     page = get_page()
     if page is None:
@@ -73,6 +91,7 @@ async def browser_navigate(url: str) -> str:
 
     try:
         await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+        await dismiss_guest_overlays(page)
         return f"Navigated to: {page.url}\nTitle: {await page.title()}"
     except Exception as e:
         logger.error("browser_navigate failed: {}", e)
@@ -814,6 +833,46 @@ def hawk_read_settings() -> str:
 
     try:
         return settings_path.read_text(encoding="utf-8")
+    except Exception as e:
+        return f"error: {e}"
+
+
+@server.tool()
+def hawk_update_settings(field_path: str, value: Any) -> str:
+    """Update a setting in config/settings.yaml.
+
+    Args:
+        field_path: Dot-notation path (e.g. "linkedin.positions", "linkedin.locations", "apply.daily_max", "scoring.min_score").
+        value: The new value to set (can be a list, boolean, integer, or string).
+
+    Returns:
+        Confirmation message.
+    """
+    from hawk.settings import update_setting
+
+    try:
+        update_setting(field_path, value)
+        return f"Setting updated: {field_path} = {value}"
+    except Exception as e:
+        return f"error: {e}"
+
+
+@server.tool()
+def hawk_sync_resume() -> str:
+    """Synchronize user profile data from config/profile.yaml into config/plain_text_resume.yaml.
+
+    Populates contact details, education, experience, skills, and languages
+    so the plain text resume is fully populated and ready for tailoring or scoring.
+
+    Returns:
+        Confirmation message.
+    """
+    from hawk.profile import load_profile, sync_profile_to_resume
+
+    try:
+        profile = load_profile()
+        sync_profile_to_resume(profile)
+        return "Resume synchronized successfully from profile.yaml to plain_text_resume.yaml"
     except Exception as e:
         return f"error: {e}"
 

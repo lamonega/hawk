@@ -12,6 +12,8 @@ from loguru import logger
 from pydantic import BaseModel, Field
 
 PROFILE_PATH = Path(__file__).resolve().parent.parent / "config" / "profile.yaml"
+RESUME_PATH = Path(__file__).resolve().parent.parent / "config" / "plain_text_resume.yaml"
+
 
 # Fields the agent MUST ask about if empty
 REQUIRED_FIELDS = {
@@ -134,8 +136,99 @@ def load_profile(path: Path | None = None) -> UserProfile:
     return UserProfile(**data)
 
 
-def save_profile(profile: UserProfile, path: Path | None = None) -> None:
-    """Save user profile to YAML."""
+def sync_profile_to_resume(profile: UserProfile, resume_path: Path | None = None) -> None:
+    """Synchronize UserProfile data into plain_text_resume.yaml."""
+    resume_path = resume_path or RESUME_PATH
+    existing_data: dict[str, Any] = {}
+    if resume_path.exists():
+        try:
+            with open(resume_path, "r", encoding="utf-8") as f:
+                existing_data = yaml.safe_load(f) or {}
+        except Exception as e:
+            logger.warning("Could not load existing resume at {}: {}", resume_path, e)
+
+    # Personal info
+    personal = existing_data.get("personal_information") or {}
+    if profile.personal.first_name:
+        personal["name"] = profile.personal.first_name
+    if profile.personal.last_name:
+        personal["surname"] = profile.personal.last_name
+    if profile.personal.city:
+        personal["city"] = profile.personal.city
+    if profile.personal.country:
+        personal["country"] = profile.personal.country
+    if profile.personal.postal_code:
+        personal["zip_code"] = profile.personal.postal_code
+    if profile.personal.email:
+        personal["email"] = profile.personal.email
+    if profile.personal.phone:
+        personal["phone"] = profile.personal.phone
+    if profile.links.github:
+        personal["github"] = profile.links.github
+    if profile.links.linkedin:
+        personal["linkedin"] = profile.links.linkedin
+    existing_data["personal_information"] = personal
+
+    # Education
+    if profile.education.degree or profile.education.school or profile.education.field:
+        edu_list = existing_data.get("education_details") or []
+        if not edu_list or not isinstance(edu_list, list) or len(edu_list) == 0:
+            edu_list = [{}]
+        edu = edu_list[0] if isinstance(edu_list[0], dict) else {}
+        if profile.education.degree:
+            edu["education_level"] = profile.education.degree
+        if profile.education.school:
+            edu["institution"] = profile.education.school
+        if profile.education.field:
+            edu["field_of_study"] = profile.education.field
+        if profile.education.graduation_year:
+            try:
+                edu["year_of_completion"] = int(profile.education.graduation_year)
+            except ValueError:
+                edu["year_of_completion"] = profile.education.graduation_year
+        edu_list[0] = edu
+        existing_data["education_details"] = edu_list
+
+    # Experience
+    if profile.experience and len(profile.experience) > 0:
+        existing_data["experience_details"] = profile.experience
+    elif profile.professional.current_title or profile.professional.current_company:
+        exp_list = existing_data.get("experience_details") or []
+        if not exp_list or not isinstance(exp_list, list) or len(exp_list) == 0:
+            exp_list = [{}]
+        exp = exp_list[0] if isinstance(exp_list[0], dict) else {}
+        if profile.professional.current_title:
+            exp["position"] = profile.professional.current_title
+        if profile.professional.current_company:
+            exp["company"] = profile.professional.current_company
+        if profile.professional.summary:
+            exp["key_responsibilities"] = [{"description": profile.professional.summary}]
+        if profile.skills:
+            exp["skills_acquired"] = list(profile.skills.keys())
+        exp_list[0] = exp
+        existing_data["experience_details"] = exp_list
+
+    # Languages
+    if profile.languages:
+        existing_data["languages"] = [
+            {"language": lang.capitalize(), "proficiency": str(level)}
+            for lang, level in profile.languages.items()
+        ]
+
+    # Ensure required top-level keys exist
+    for key in ("projects", "achievements", "certifications", "interests"):
+        if key not in existing_data:
+            existing_data[key] = []
+
+    resume_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(resume_path, "w", encoding="utf-8") as f:
+        yaml.dump(existing_data, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+
+    logger.info("Resume synchronized to {}", resume_path)
+
+
+def save_profile(profile: UserProfile, path: Path | None = None, sync_resume: bool = True) -> None:
+    """Save user profile to YAML and auto-sync plain text resume."""
     path = path or PROFILE_PATH
     path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -143,13 +236,19 @@ def save_profile(profile: UserProfile, path: Path | None = None) -> None:
         yaml.dump(profile.model_dump(), f, default_flow_style=False, allow_unicode=True)
 
     logger.info("Profile saved to {}", path)
+    if sync_resume:
+        try:
+            sync_profile_to_resume(profile)
+        except Exception as e:
+            logger.warning("Auto-syncing resume failed: {}", e)
 
 
 def mark_profile_complete(profile: UserProfile, path: Path | None = None) -> UserProfile:
     """Set completed_at timestamp and save."""
     profile.completed_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    save_profile(profile, path)
+    save_profile(profile, path, sync_resume=True)
     return profile
+
 
 
 def get_profile_value(profile: UserProfile, key: str) -> str:

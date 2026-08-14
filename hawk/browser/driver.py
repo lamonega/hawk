@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import random
 from pathlib import Path
@@ -273,6 +274,92 @@ async def save_session() -> None:
         logger.info("Session saved to {}", state_path)
 
 
+async def dismiss_guest_overlays(page: Page | None = None) -> bool:
+    """Dismiss Google sign-in prompts, guest modals or contextual login banners if present."""
+    p = page or get_page()
+    if p is None or p.is_closed():
+        return False
+
+    dismiss_selectors = [
+        'button[aria-label="Descartar"]',
+        'button[aria-label="Dismiss"]',
+        'button[aria-label="Cerrar"]',
+        'button[aria-label="Close"]',
+        '.contextual-sign-in-modal__modal-dismiss-btn',
+        '.modal__dismiss-btn',
+        'button.artdeco-modal__dismiss',
+        '[data-test-modal-close-btn]',
+        'button[data-tracking-control-name="public_jobs_contextual-sign-in-modal_sign-in-modal_dismiss"]',
+    ]
+
+    dismissed = False
+    for sel in dismiss_selectors:
+        try:
+            loc = p.locator(sel).first
+            if await loc.is_visible(timeout=500):
+                # Avoid closing the actual Easy Apply application modal
+                is_easy_apply = await loc.evaluate("""el => {
+                    const m = el.closest('.jobs-easy-apply-modal, [data-test-modal-id="easy-apply-modal"]');
+                    return !!m;
+                }""")
+                if not is_easy_apply:
+                    await loc.click(timeout=1000)
+                    dismissed = True
+                    logger.info("Dismissed guest overlay via selector: {}", sel)
+                    await asyncio.sleep(0.5)
+                    break
+        except Exception:
+            continue
+
+    return dismissed
+
+
+async def wait_for_login(timeout: int = 120, poll_interval: float = 2.0) -> str:
+    """Wait actively for the user to complete LinkedIn login and save the session.
+
+    Checks for the 'li_at' authentication cookie and active navigation elements.
+    """
+    page = get_page()
+    if page is None:
+        return "error: Browser not started. Call browser_launch first."
+
+    start_time = asyncio.get_event_loop().time()
+    logger.info("Waiting for LinkedIn login (timeout={}s)...", timeout)
+
+    while (asyncio.get_event_loop().time() - start_time) < timeout:
+        try:
+            if page.is_closed():
+                return "error: Browser was closed"
+
+            # 1. Check cookies for li_at (LinkedIn's primary authentication token)
+            cookies = await page.context.cookies(["https://www.linkedin.com"])
+            has_li_at = any(c.get("name") == "li_at" and bool(c.get("value")) for c in cookies)
+
+            # 2. Check current page elements / URL
+            current_url = page.url
+            is_feed = "/feed" in current_url or "/jobs" in current_url
+
+            nav_el = None
+            try:
+                nav_el = await page.query_selector("#global-nav, .global-nav__me, .feed-identity-module, .nav-item--profile")
+            except Exception:
+                pass
+
+            if has_li_at or nav_el or (is_feed and "login" not in current_url and "authwall" not in current_url):
+                logger.info("LinkedIn login detected! Saving session state...")
+                await asyncio.sleep(1.0)
+                await save_session()
+                await dismiss_guest_overlays(page)
+                return "logged_in"
+
+        except Exception as e:
+            logger.debug("Error during login wait poll: {}", e)
+
+        await asyncio.sleep(poll_interval)
+
+    return "timeout: User did not log in within the allotted time"
+
+
 async def check_linkedin_session() -> str:
     """Check if the browser has an active LinkedIn session.
 
@@ -284,7 +371,11 @@ async def check_linkedin_session() -> str:
         return "not_started"
 
     try:
+        cookies = await page.context.cookies(["https://www.linkedin.com"])
+        has_li_at = any(c.get("name") == "li_at" and bool(c.get("value")) for c in cookies)
+
         await page.goto("https://www.linkedin.com/feed/", wait_until="domcontentloaded", timeout=15000)
+        await dismiss_guest_overlays(page)
         url = page.url
 
         if "login" in url or "authwall" in url:
@@ -295,12 +386,8 @@ async def check_linkedin_session() -> str:
             logger.warning("LinkedIn checkpoint/challenge detected at: {}", url)
             return "not_logged_in"
 
-        feed = await page.query_selector(".feed-identity-module")
-        if feed:
-            await save_session()
-            return "logged_in"
-
-        if "/feed" in url:
+        feed = await page.query_selector(".feed-identity-module, #global-nav, .global-nav__me")
+        if feed or has_li_at or "/feed" in url:
             await save_session()
             return "logged_in"
 
@@ -317,3 +404,4 @@ async def close() -> None:
     """Close the browser and clean up."""
     await _close_existing()
     logger.info("Browser closed")
+

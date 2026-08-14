@@ -45,7 +45,7 @@ Follow this pipeline when asked to apply to jobs:
 
 1. Call `browser_launch(headless=false)` to start the browser with the persistent profile.
 2. Call `browser_check_session()` to verify LinkedIn login.
-   - If `not_logged_in`: **stop and ask the human** to log in manually, then call `browser_check_session()` again.
+   - If `not_logged_in`: ask the human to log in manually, then call `browser_wait_for_login(timeout=120)`.
    - If `logged_in`: proceed.
 3. Call `hawk_check_profile()` to verify the user profile is complete.
    - If `is_complete` is **false** and `completed_at` is empty: **you MUST ask the human** to fill the profile.
@@ -53,8 +53,9 @@ Follow this pipeline when asked to apply to jobs:
        - If yes: call `hawk_import_file(path)`, read the content, extract fields, save each with `hawk_update_profile()`.
      - **Option B (manual)**: Ask each question from `missing_required` one by one via `ask_human()`.
      - Save each answer with `hawk_update_profile(field_path, value)`.
-     - After all required fields are filled, call `hawk_mark_profile_complete()`.
-   - If `is_complete` is true: proceed (you can optionally ask about `missing_optional` fields).
+     - After all required fields are filled, call `hawk_mark_profile_complete()` (which auto-syncs `plain_text_resume.yaml`).
+     - Ask the user for desired job titles/locations and update settings with `hawk_update_settings("linkedin.positions", ...)` and `hawk_update_settings("linkedin.locations", ...)`.
+   - If `is_complete` is true: proceed (you can call `hawk_sync_resume()` to ensure resume sync, or update search filters).
 
 ### 2. Discover
 
@@ -145,13 +146,13 @@ hawk/
 ├── hawk/
 │   ├── __init__.py              # version
 │   ├── cli.py                   # CLI: hawk doctor|mcp|run
-│   ├── mcp_server.py            # MCP server with 35 tools
+│   ├── mcp_server.py            # MCP server with 38 tools
 │   ├── settings.py              # Pydantic settings (auto-reloads on file change)
-│   ├── profile.py               # User profile: load/save, field matching, completeness check
+│   ├── profile.py               # User profile: load/save, field matching, completeness check, resume sync
 │   ├── file_reader.py           # File import (PDF/TXT/MD/YAML/JSON) with size limits
 │   ├── browser/
 │   │   ├── __init__.py
-│   │   ├── driver.py            # Playwright + stealth launch, persistent profile, session check
+│   │   ├── driver.py            # Playwright + stealth launch, persistent profile, session check, login wait
 │   │   ├── dom.py               # DOM snapshot, click/type/select/upload via element index
 │   │   └── pdf.py               # printToPDF with headless fallback for headed mode
 │   ├── linkedin/
@@ -174,14 +175,15 @@ hawk/
 └── pyproject.toml               # Project metadata
 ```
 
-## Available Tools (35 total)
+## Available Tools (38 total)
 
-### Browser (11)
+### Browser (12)
 | Tool | Description |
 |------|-------------|
 | `browser_launch` | Start browser with persistent profile |
 | `browser_check_session` | Verify LinkedIn login status |
-| `browser_navigate` | Navigate to a URL |
+| `browser_wait_for_login` | Actively wait for user manual login & auto-save session |
+| `browser_navigate` | Navigate to a URL (auto-dismisses guest popups) |
 | `browser_snapshot` | Accessibility tree of interactive elements |
 | `browser_click` | Click element by index |
 | `browser_type` | Type text into element |
@@ -213,16 +215,19 @@ hawk/
 | `get_daily_count` | Get today's application count |
 | `get_application_history` | Check if already applied |
 
-### Utility (10)
+### Utility (12)
 | Tool | Description |
 |------|-------------|
 | `hawk_read_resume` | Read resume YAML template |
+| `hawk_sync_resume` | Synchronize profile data into plain text resume template |
 | `hawk_read_profile` | Read user profile |
 | `hawk_check_profile` | Check profile completeness + missing fields |
-| `hawk_mark_profile_complete` | Set completed_at timestamp |
-| `hawk_update_profile` | Update a profile field (with Pydantic validation) |
+| `hawk_mark_profile_complete` | Set completed_at timestamp (auto-syncs resume) |
+| `hawk_update_profile` | Update a profile field (with Pydantic validation & auto-sync) |
 | `hawk_learn_answer` | Save a Q&A pair for future form questions |
 | `hawk_import_file` | Read a user-provided file (PDF/TXT/MD/YAML/JSON) for profile import |
 | `hawk_list_profile_fields` | List all profile fields with current values |
 | `hawk_read_settings` | Read current settings (auto-reloads on file change) |
+| `hawk_update_settings` | Update settings.yaml fields (positions, limits, filters) |
 | `ask_human` | Signal need for human input |
+
