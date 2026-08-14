@@ -44,6 +44,13 @@ from hawk.storage import (
 mcp = FastMCP("hawk")
 init_db()
 
+# ── Supported Operation Constants ─────────────────────────────────────────────
+SUPPORTED_SESSION_ACTIONS: tuple[str, ...] = ("launch", "status", "wait_login", "close")
+SUPPORTED_DOC_TYPES: tuple[str, ...] = ("resume", "cv", "cover_letter", "letter")
+SUPPORTED_PROFILE_ACTIONS: tuple[str, ...] = ("get", "update", "learn", "query_kb", "sync")
+SUPPORTED_STATS_ACTIONS: tuple[str, ...] = ("daily_count", "get_app", "save_app", "get_job")
+RECRUITER_NOTE_MAX_CHARS: int = 299
+
 
 # ── DRY Helper Utilities ───────────────────────────────────────────────────────
 
@@ -119,7 +126,7 @@ async def browser_session(
             return _to_json({"action": "close", "status": "browser_closed"})
         return _error_json(
             f"Unknown session action '{action}'",
-            supported_actions=["launch", "status", "wait_login", "close"],
+            supported_actions=list(SUPPORTED_SESSION_ACTIONS),
         )
     except Exception as exc:
         logger.error("browser_session failed: {}", exc)
@@ -364,7 +371,7 @@ async def linkedin_connect_recruiter(
             recruiter_name=recruiter_name.strip(),
             language=language,
         )
-        note = note[:299]
+        note = note[:RECRUITER_NOTE_MAX_CHARS]
 
         res = await connect_recruiter(recruiter_url=recruiter_url.strip(), note=note, dry_run=dry_run)
         return _to_json({
@@ -455,7 +462,7 @@ async def hawk_generate_document(
             })
         return _error_json(
             f"Unknown doc_type '{doc_type}'",
-            supported_types=["resume", "cv", "cover_letter", "letter"],
+            supported_types=list(SUPPORTED_DOC_TYPES),
         )
     except Exception as exc:
         logger.error("hawk_generate_document failed for job {}: {}", job_id, exc)
@@ -539,7 +546,7 @@ async def hawk_profile(
 
         return _error_json(
             f"Unknown profile action '{action}'",
-            supported_actions=["get", "update", "learn", "query_kb", "sync"],
+            supported_actions=list(SUPPORTED_PROFILE_ACTIONS),
         )
     except Exception as exc:
         logger.error("hawk_profile action '{}' failed: {}", action, exc)
@@ -616,7 +623,7 @@ async def hawk_stats(
 
         return _error_json(
             f"Unknown stats action '{action}'",
-            supported_actions=["daily_count", "get_app", "save_app", "get_job"],
+            supported_actions=list(SUPPORTED_STATS_ACTIONS),
         )
     except Exception as exc:
         logger.error("hawk_stats action '{}' failed: {}", action, exc)

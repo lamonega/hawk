@@ -86,6 +86,17 @@ SPANISH_DETECTION_WORDS: tuple[str, ...] = (
     "consultor",
 )
 
+_PITCH_NOTE_TEMPLATE_ES: str = (
+    "{greeting} me postulé a {job_title} en {company}.{skills_part} "
+    "Me encantaría conectar y conversar sobre cómo puedo sumar al equipo. ¡Saludos, {name}!"
+)
+_PITCH_NOTE_TEMPLATE_EN: str = (
+    "{greeting} I applied for the {job_title} role at {company}.{skills_part} "
+    "I'd love to connect and discuss how I can contribute! Best, {name}"
+)
+_PITCH_SKILLS_PART_ES: str = " Con experiencia en {skills},"
+_PITCH_SKILLS_PART_EN: str = " With a background in {skills},"
+
 # ── 5. Interaction Response Markers ──────────────────────────────────────────
 _MARKER_UPLOADED: str = "uploaded"
 _MARKER_SELECTED: str = "selected"
@@ -522,12 +533,24 @@ def generate_recruiter_pitch(
 
     if is_es:
         greeting = f"Hola {first_name}," if first_name else "Hola,"
-        skills_part = f" Con experiencia en {skills_str}," if skills_str else ""
-        note = f"{greeting} me postulé a {job_title} en {company}.{skills_part} Me encantaría conectar y conversar sobre cómo puedo sumar al equipo. ¡Saludos, {name}!"
+        skills_part = _PITCH_SKILLS_PART_ES.format(skills=skills_str) if skills_str else ""
+        note = _PITCH_NOTE_TEMPLATE_ES.format(
+            greeting=greeting,
+            job_title=job_title,
+            company=company,
+            skills_part=skills_part,
+            name=name,
+        )
     else:
         greeting = f"Hi {first_name}," if first_name else "Hi,"
-        skills_part = f" With a background in {skills_str}," if skills_str else ""
-        note = f"{greeting} I applied for the {job_title} role at {company}.{skills_part} I'd love to connect and discuss how I can contribute! Best, {name}"
+        skills_part = _PITCH_SKILLS_PART_EN.format(skills=skills_str) if skills_str else ""
+        note = _PITCH_NOTE_TEMPLATE_EN.format(
+            greeting=greeting,
+            job_title=job_title,
+            company=company,
+            skills_part=skills_part,
+            name=name,
+        )
 
     return note.strip()[:MAX_NOTE_LENGTH]
 

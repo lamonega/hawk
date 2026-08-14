@@ -46,6 +46,42 @@ SPANISH_JOB_KEYWORDS: tuple[str, ...] = (
     "consultor",
 )
 
+# ── Fallback Cover Letter Content & Salutations ──────────────────────────────
+_SIGNOFF_ES: str = "Atentamente,"
+_SIGNOFF_EN: str = "Sincerely,"
+
+_SALUTATION_MANAGER_ES: str = "Estimado/a {name}:"
+_SALUTATION_TEAM_ES: str = "Estimado equipo de {company}:"
+_SALUTATION_GENERIC_ES: str = "Estimado/a responsable de selección:"
+
+_SALUTATION_MANAGER_EN: str = "Dear {name},"
+_SALUTATION_TEAM_EN: str = "Dear Hiring Team at {company},"
+_SALUTATION_GENERIC_EN: str = "Dear Hiring Manager,"
+
+_INTRO_COMPANY_ES: str = "Me dirijo a ustedes con gran interés en la posición de {job_title} en {company}."
+_INTRO_GENERIC_ES: str = "Me dirijo a ustedes con gran interés en la posición de {job_title}."
+_OUTRO_ES: str = (
+    "Agradezco de antemano su tiempo y consideración. Quedo a su entera disposición "
+    "para profundizar en mi trayectoria durante una entrevista."
+)
+
+_INTRO_COMPANY_EN: str = "I am writing to express my strong interest in the {job_title} role at {company}."
+_INTRO_GENERIC_EN: str = "I am writing to express my strong interest in the {job_title} role."
+_OUTRO_EN: str = (
+    "Thank you for your time and consideration. I welcome the opportunity to discuss "
+    "how my background can support your goals."
+)
+
+_BODY_HEADLINE_SKILLS_ES: str = "Con trayectoria como {headline} y competencias en {top_skills}, aporto experiencia práctica orientada a resultados."
+_BODY_HEADLINE_ES: str = "Con trayectoria profesional como {headline}, aporto experiencia y enfoque analítico al equipo."
+_BODY_SKILLS_ES: str = "Con competencias técnicas en {top_skills}, puedo aportar valor inmediato a los objetivos de su equipo."
+_BODY_GENERIC_ES: str = "Cuento con formación y experiencia profesional alineadas con los requerimientos de la vacante."
+
+_BODY_HEADLINE_SKILLS_EN: str = "With my background as {headline} and practical expertise in {top_skills}, I offer proven capabilities aligned with your needs."
+_BODY_HEADLINE_EN: str = "With my background as {headline}, I bring dedicated problem-solving and professional commitment to your team."
+_BODY_SKILLS_EN: str = "With demonstrated expertise in {top_skills}, I can deliver immediate value to your engineering initiatives."
+_BODY_GENERIC_EN: str = "My professional background and skill set align with the qualifications outlined for this position."
+
 _jinja_env: Environment = Environment(
     loader=FileSystemLoader(str(TEMPLATES_DIR)),
     autoescape=True,
@@ -178,20 +214,20 @@ def _select_cover_letter_body(
         return summary
     if is_es:
         if headline and top_skills:
-            return f"Con trayectoria como {headline} y competencias en {top_skills}, aporto experiencia práctica orientada a resultados."
+            return _BODY_HEADLINE_SKILLS_ES.format(headline=headline, top_skills=top_skills)
         if headline:
-            return f"Con trayectoria profesional como {headline}, aporto experiencia y enfoque analítico al equipo."
+            return _BODY_HEADLINE_ES.format(headline=headline)
         if top_skills:
-            return f"Con competencias técnicas en {top_skills}, puedo aportar valor inmediato a los objetivos de su equipo."
-        return "Cuento con formación y experiencia profesional alineadas con los requerimientos de la vacante."
+            return _BODY_SKILLS_ES.format(top_skills=top_skills)
+        return _BODY_GENERIC_ES
     else:
         if headline and top_skills:
-            return f"With my background as {headline} and practical expertise in {top_skills}, I offer proven capabilities aligned with your needs."
+            return _BODY_HEADLINE_SKILLS_EN.format(headline=headline, top_skills=top_skills)
         if headline:
-            return f"With my background as {headline}, I bring dedicated problem-solving and professional commitment to your team."
+            return _BODY_HEADLINE_EN.format(headline=headline)
         if top_skills:
-            return f"With demonstrated expertise in {top_skills}, I can deliver immediate value to your engineering initiatives."
-        return "My professional background and skill set align with the qualifications outlined for this position."
+            return _BODY_SKILLS_EN.format(top_skills=top_skills)
+        return _BODY_GENERIC_EN
 
 
 def _build_cover_letter_paragraphs(
@@ -230,24 +266,18 @@ def _build_cover_letter_paragraphs(
 
     if is_es:
         intro = (
-            f"Me dirijo a ustedes con gran interés en la posición de {job_title} en {company}."
+            _INTRO_COMPANY_ES.format(job_title=job_title, company=company)
             if company
-            else f"Me dirijo a ustedes con gran interés en la posición de {job_title}."
+            else _INTRO_GENERIC_ES.format(job_title=job_title)
         )
-        outro = (
-            "Agradezco de antemano su tiempo y consideración. Quedo a su entera disposición "
-            "para profundizar en mi trayectoria durante una entrevista."
-        )
+        outro = _OUTRO_ES
     else:
         intro = (
-            f"I am writing to express my strong interest in the {job_title} role at {company}."
+            _INTRO_COMPANY_EN.format(job_title=job_title, company=company)
             if company
-            else f"I am writing to express my strong interest in the {job_title} role."
+            else _INTRO_GENERIC_EN.format(job_title=job_title)
         )
-        outro = (
-            "Thank you for your time and consideration. I welcome the opportunity to discuss "
-            "how my background can support your goals."
-        )
+        outro = _OUTRO_EN
 
     body = _select_cover_letter_body(summary, headline, top_skills, is_es)
     return [intro, body, outro]
@@ -266,12 +296,12 @@ def _build_salutation(hiring_manager: str, company: str, is_es: bool) -> str:
     """
     if is_es:
         if hiring_manager:
-            return f"Estimado/a {hiring_manager}:"
-        return f"Estimado equipo de {company}:" if company else "Estimado/a responsable de selección:"
+            return _SALUTATION_MANAGER_ES.format(name=hiring_manager)
+        return _SALUTATION_TEAM_ES.format(company=company) if company else _SALUTATION_GENERIC_ES
     else:
         if hiring_manager:
-            return f"Dear {hiring_manager},"
-        return f"Dear Hiring Team at {company}," if company else "Dear Hiring Manager,"
+            return _SALUTATION_MANAGER_EN.format(name=hiring_manager)
+        return _SALUTATION_TEAM_EN.format(company=company) if company else _SALUTATION_GENERIC_EN
 
 
 # ── HTML Renderers ───────────────────────────────────────────────────────────
@@ -382,7 +412,7 @@ def render_ats_cover_letter_html(
         hiring_manager=hiring_manager,
         salutation=_build_salutation(hiring_manager, company, is_es),
         paragraphs=paragraphs,
-        signoff_text="Atentamente," if is_es else "Sincerely,",
+        signoff_text=_SIGNOFF_ES if is_es else _SIGNOFF_EN,
     )
 
 
