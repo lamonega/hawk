@@ -104,7 +104,7 @@ def run(jobs: int, dry_run: bool) -> None:
             await human_delay()
 
             details = await extract_job_details()
-            role_name = details.get("role", card.get("role", "DevOps Engineer"))
+            role_name = details.get("role") or card.get("role") or "Candidate"
             resume_pdf = await generate_tailored_pdf(job_id=job_id, job_title=role_name)
 
             res = await apply_step(resume_path=resume_pdf, auto_advance=True, dry_run=dry_run)

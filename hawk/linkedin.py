@@ -336,18 +336,24 @@ def generate_recruiter_pitch(
     """Generate concise LinkedIn recruiter connection note (<300 chars limit)."""
     profile = load_profile()
     name = profile.personal.first_name
+    skills_list = top_skills or [k.capitalize() for k in profile.skills.keys()][:3] or [profile.professional.headline]
+    skills_str = ", ".join(filter(None, skills_list))
 
     is_es = language.lower() in ("es", "spanish", "español") or any(
         w in f"{job_title} {company}".lower() for w in ("ingeniero", "desarrollador", "remoto", "sistemas")
     )
-    skills_str = ", ".join((top_skills or ["Docker", "CI/CD", "AWS"])[:3])
     first_name = recruiter_name.split()[0] if recruiter_name else ""
 
     if is_es:
         greeting = f"Hola {first_name}," if first_name else "Hola,"
-        note = f"{greeting} me postulé a {job_title} en {company}. Con experiencia en {skills_str}, me encantaría conectar y conversar sobre cómo puedo sumar al equipo. ¡Saludos, {name}!"
+        skills_part = f" Con experiencia en {skills_str}," if skills_str else ""
+        note = f"{greeting} me postulé a {job_title} en {company}.{skills_part} me encantaría conectar y conversar sobre cómo puedo sumar al equipo. ¡Saludos, {name}!"
     else:
         greeting = f"Hi {first_name}," if first_name else "Hi,"
+        skills_part = f" With experience in {skills_str}," if skills_str else ""
+        note = f"{greeting} I applied for the {job_title} role at {company}.{skills_part} I'd love to connect and discuss how I can contribute! Best, {name}"
+
+    return note[:299]
         note = f"{greeting} I applied for the {job_title} role at {company}. With experience in {skills_str}, I'd love to connect and discuss how I can contribute! Best, {name}"
 
     return note[:299]

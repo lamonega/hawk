@@ -148,7 +148,7 @@ async def linkedin_connect_recruiter(
     dry_run: bool = True,
     language: str = "auto",
 ) -> str:
-    """Generate pitch and send connection request to recruiter/job poster."""
+    """Send personalized connection note (<300 chars) to recruiter. You (the agent) should provide a dynamic custom_note grounded in candidate facts."""
     note = custom_note or generate_recruiter_pitch(
         job_title=job_title,
         company=company,
@@ -173,7 +173,7 @@ async def hawk_generate_document(
     highlighted_skills: str = "",
     language: str = "auto",
 ) -> str:
-    """Generate ATS-optimized PDF resume or cover_letter matching role and language."""
+    """Generate ATS PDF resume or cover letter. You (the agent) must dynamically provide tailored_headline, tailored_summary, and highlighted_skills grounded strictly in candidate profile facts."""
     skills_list = [s.strip() for s in highlighted_skills.split(",") if s.strip()] if highlighted_skills else None
     paragraphs_list = [p.strip() for p in body_paragraphs.split("\n\n") if p.strip()] if body_paragraphs else None
 

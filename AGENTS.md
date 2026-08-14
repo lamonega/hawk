@@ -91,6 +91,8 @@ Follow this 5-stage pipeline when applying to jobs:
 
 ## Agent Rules
 
+- **Zero Hardcoding & 100% Dynamic Generation**: Never assume or hardcode candidate skills, titles, or experiences. Always inspect `hawk_profile(action="get")` and retrieve relevant project context using `hawk_profile(action="query_kb", query=...)`. All summaries, headlines, cover letters, and connection pitches must be dynamically generated to match the candidate's actual background and the target job description.
 - **Language Matching**: Always generate headlines, summaries, cover letters, and connection notes in the **exact primary language of the job posting** (Spanish for Spanish jobs, English for English jobs).
 - **Truthful ATS Compliance**: Never fabricate skills, companies, or experiences. Resumes must remain clean, professional, and emoji-free.
 - **Safety First**: Always verify `dry_run` before final submission and respect daily limits (`apply.daily_max`).
+

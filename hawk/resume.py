@@ -114,18 +114,21 @@ def render_ats_cover_letter_html(
     elif isinstance(tailored_body_paragraphs, list) and tailored_body_paragraphs:
         paragraphs = [str(p).strip() for p in tailored_body_paragraphs if str(p).strip()]
     else:
+        summary = p.get("professional", {}).get("summary", "").strip()
+        headline = p.get("professional", {}).get("headline", "").strip()
+        skills = list(p.get("skills", {}).keys())
+        skills_text = ", ".join(skills[:4]) if skills else ""
+
         if is_es:
-            paragraphs = [
-                f"Me dirijo a ustedes con gran interés en la posición de {job_title} en {company}.",
-                f"Con mi experiencia en DevOps, automatización de CI/CD y gestión de infraestructura en la nube, puedo aportar valor inmediato a los objetivos de su equipo.",
-                "Agradezco su consideración y quedo a disposición para conversar sobre cómo mi perfil se alinea con sus necesidades.",
-            ]
+            intro = f"Me dirijo a ustedes con gran interés en la posición de {job_title} en {company}." if company else f"Me dirijo a ustedes con gran interés en la posición de {job_title}."
+            body = summary or (f"Con experiencia como {headline} y conocimientos en {skills_text}, puedo aportar valor inmediato a los objetivos de su equipo." if headline else f"Con experiencia en {skills_text}, puedo aportar valor inmediato a los objetivos de su equipo.")
+            outro = "Agradezco su tiempo y consideración. Quedo a su entera disposición para ampliar cualquier información en una entrevista."
+            paragraphs = [intro, body, outro]
         else:
-            paragraphs = [
-                f"I am writing to express my strong interest in the {job_title} role at {company}.",
-                f"With my background in DevOps, CI/CD pipeline automation, and cloud infrastructure, I can deliver immediate value to your team's initiatives.",
-                "Thank you for your time and consideration. I look forward to discussing how my experience aligns with your goals.",
-            ]
+            intro = f"I am writing to express my strong interest in the {job_title} role at {company}." if company else f"I am writing to express my strong interest in the {job_title} role."
+            body = summary or (f"With my background as {headline} and expertise in {skills_text}, I can deliver immediate value to your team's initiatives." if headline else f"With my hands-on expertise in {skills_text}, I can deliver immediate value to your team's initiatives.")
+            outro = "Thank you for your time and consideration. I look forward to discussing how my background aligns with your goals."
+            paragraphs = [intro, body, outro]
 
     template = _jinja_env.get_template("cover_letter.html")
     return template.render(
