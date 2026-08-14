@@ -74,13 +74,16 @@ def mcp() -> None:
 @click.option("--jobs", "-n", default=3, type=int, help="Number of jobs to process")
 @click.option("--dry-run/--no-dry-run", default=True, help="Don't submit applications")
 def run(jobs: int, dry_run: bool) -> None:
-    """Run hawk in script mode (no agent needed)."""
-    from hawk.storage.db import init_db
+    """Run hawk in autonomous script mode."""
+    import asyncio
+    from hawk.workflow import JobSearchEngine
 
-    init_db()
-    click.echo(f"Running hawk in script mode ({jobs} jobs, dry_run={dry_run})")
-    click.echo("This mode will be fully implemented in F5 (workflow.py).")
-    click.echo("For now, use `hawk mcp` and drive from opencode/agy.")
+    click.echo(f"Starting hawk autonomous pipeline (jobs={jobs}, dry_run={dry_run})...")
+    engine = JobSearchEngine(dry_run=dry_run)
+    result = asyncio.run(engine.run(max_jobs=jobs))
+    click.echo(f"Pipeline finished: {result.get('status')}")
+    if result.get("processed_jobs_count"):
+        click.echo(f"Processed {result['processed_jobs_count']} jobs. Today's total: {result.get('today_count')}")
 
 
 if __name__ == "__main__":

@@ -964,6 +964,123 @@ async def hawk_generate_tailored_resume(
 
 
 @server.tool()
+async def hawk_generate_cover_letter(
+    job_id: str,
+    job_title: str = "",
+    company: str = "",
+    hiring_manager: str = "",
+    tailored_body: list[str] | str | None = None,
+) -> str:
+    """Generate an ATS-optimized tailored PDF cover letter for a specific job application.
+
+    Reads the user profile, formats tailored paragraphs into clean typography,
+    and exports a professional PDF to output/cover_letters/cover_letter_{job_id}.pdf.
+
+    Args:
+        job_id: Unique job identifier or posting hash.
+        job_title: Target job title.
+        company: Target company name.
+        hiring_manager: Optional name of the hiring manager/recruiter.
+        tailored_body: List of paragraphs or formatted text for the letter body.
+
+    Returns:
+        Absolute path to the generated PDF cover letter file.
+    """
+    import sys
+    sys.modules.pop("hawk.resume.generator", None)
+    from hawk.resume.generator import generate_tailored_cover_letter
+
+    try:
+        pdf_path = await generate_tailored_cover_letter(
+            job_id=job_id,
+            job_title=job_title,
+            company=company,
+            hiring_manager=hiring_manager,
+            tailored_body=tailored_body,
+        )
+        return pdf_path
+    except Exception as e:
+        logger.error("Failed to generate cover letter: {}", e)
+        return f"error: {e}"
+
+
+@server.tool()
+def hawk_query_knowledge_base(query: str) -> str:
+    """Retrieve grounded candidate context (STAR project stories, skills, facts, preferences).
+
+    Use this whenever you need to answer a complex, open-ended screening question
+    or verify candidate qualifications before answering form inputs.
+
+    Args:
+        query: The question, skill, or topic to search for in candidate background.
+
+    Returns:
+        JSON string with matched STAR stories, skills, direct facts, and relevant background.
+    """
+    from hawk.profile import load_profile, query_knowledge_base
+
+    try:
+        profile = load_profile()
+        result = query_knowledge_base(profile, query)
+        return json.dumps(result, indent=2, default=str)
+    except Exception as e:
+        return f"error: {e}"
+
+
+@server.tool()
+def linkedin_generate_recruiter_pitch(
+    job_title: str,
+    company: str,
+    recruiter_name: str = "",
+    top_skills: list[str] | None = None,
+) -> str:
+    """Generate a personalized connection request pitch (< 300 chars) for a recruiter/job poster.
+
+    Args:
+        job_title: Target job title.
+        company: Target company name.
+        recruiter_name: Recruiter name (if known).
+        top_skills: Optional top 2-3 skills to highlight.
+
+    Returns:
+        Connection pitch text formatted to stay within LinkedIn's 300 char note limit.
+    """
+    from hawk.linkedin.operations import generate_recruiter_pitch
+
+    return generate_recruiter_pitch(
+        job_title=job_title,
+        company=company,
+        recruiter_name=recruiter_name,
+        top_skills=top_skills,
+    )
+
+
+@server.tool()
+async def linkedin_connect_recruiter(
+    recruiter_url: str,
+    note: str = "",
+    dry_run: bool | None = None,
+) -> str:
+    """Send a personalized connection request with note to a recruiter or job poster.
+
+    Args:
+        recruiter_url: URL to the recruiter's LinkedIn profile.
+        note: Custom connection message (max 300 characters).
+        dry_run: Optional override (True = stop before sending, False = send live request).
+
+    Returns:
+        Confirmation message or error.
+    """
+    from hawk.linkedin.operations import connect_with_recruiter
+    from hawk.settings import get_settings
+
+    settings = get_settings()
+    is_dry = dry_run if dry_run is not None else settings.apply.dry_run
+
+    return await connect_with_recruiter(recruiter_url, note=note, dry_run=is_dry)
+
+
+@server.tool()
 def ask_human(question: str) -> str:
     """Ask the human operator a question and wait for their response.
 

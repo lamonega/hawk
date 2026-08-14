@@ -194,7 +194,7 @@ hawk/
 | `browser_print_pdf` | Convert page to PDF (auto headless fallback) |
 | `browser_close` | Close browser and save session |
 
-### LinkedIn (11)
+### LinkedIn (13)
 | Tool | Description |
 |------|-------------|
 | `linkedin_search` | Navigate to LinkedIn job search |
@@ -204,12 +204,14 @@ hawk/
 | `linkedin_auto_fill_step` | Auto-fill current wizard step (with optional resume upload & auto-advance) |
 | `linkedin_auto_apply` | Execute entire Easy Apply flow automatically (supports tailored resume upload) |
 | `linkedin_upload_resume` | Upload custom resume PDF into Easy Apply modal |
-| `linkedin_detect_fields` | Detect form fields + progress % in Easy Apply modal |
+| `linkedin_detect_fields` | Detect form fields + validation error states in Easy Apply modal |
 | `linkedin_next_step` | Click Next/Continue/Submit in wizard |
 | `linkedin_submit` | Submit application (unfollows company, verifies modal closed) |
 | `linkedin_unfollow_company` | Uncheck "Follow Company" checkbox |
 | `linkedin_get_page_text` | Get visible page text |
 | `linkedin_build_search_url` | Build search URL (no navigation) |
+| `linkedin_generate_recruiter_pitch` | Generate tailored connection note (<300 chars) for job poster/recruiter |
+| `linkedin_connect_recruiter` | Send connection request with note to recruiter/job poster |
 
 ### Storage (4)
 | Tool | Description |
@@ -219,10 +221,12 @@ hawk/
 | `get_daily_count` | Get today's application count |
 | `get_application_history` | Check if already applied |
 
-### Utility (13)
+### Utility & Knowledge (15)
 | Tool | Description |
 |------|-------------|
 | `hawk_generate_tailored_resume` | Generate ATS-optimized custom PDF resume matching job keywords |
+| `hawk_generate_cover_letter` | Generate ATS-optimized custom PDF cover letter matching role & company |
+| `hawk_query_knowledge_base` | Query candidate's STAR project stories, skills, and facts to ground answers |
 | `hawk_read_resume` | Read resume YAML template |
 | `hawk_sync_resume` | Synchronize profile data into plain text resume template |
 | `hawk_read_profile` | Read user profile |
@@ -235,5 +239,20 @@ hawk/
 | `hawk_read_settings` | Read current settings (auto-reloads on file change) |
 | `hawk_update_settings` | Update settings.yaml fields (positions, limits, filters) |
 | `ask_human` | Signal need for human input |
+
+## Self-Healing Agent Harness Loop
+
+When applying to jobs, follow the **OODA Loop** (Observe -> Decide -> Act -> Verify):
+
+1. **Macro Action First**: Call `linkedin_auto_fill_step(resume_path=...)`.
+2. **Diagnose on Blockage**: If the modal does not advance:
+   - Call `browser_snapshot()` and inspect `form_errors` and elements with `invalid: true` or `error_message`.
+   - If a question is open-ended or technical: call `hawk_query_knowledge_base(question)` to retrieve truthful project facts.
+   - Use primitive tools (`browser_type`, `browser_select`, `browser_click`) to solve the specific blocking element.
+   - Call `linkedin_next_step()` to advance.
+3. **Escalate Only When Truly Blocked**: If after 2 self-healing attempts the step remains blocked, or a CAPTCHA appears:
+   - Call `ask_human(...)`.
+   - Save the answer with `hawk_learn_answer(...)`.
+
 
 

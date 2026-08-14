@@ -1424,3 +1424,90 @@ async def upload_resume(file_path: str) -> str:
     except Exception as e:
         logger.error("upload_resume failed: {}", e)
         return f"error: {e}"
+
+
+def generate_recruiter_pitch(
+    job_title: str,
+    company: str,
+    recruiter_name: str = "",
+    top_skills: list[str] | None = None,
+) -> str:
+    """Generate a high-impact, concise LinkedIn connection note (< 300 chars limit)."""
+    from hawk.profile import load_profile
+
+    profile = load_profile()
+    name = profile.personal.first_name
+    skills_str = ", ".join(top_skills[:3]) if top_skills else "CI/CD, Docker & AWS"
+
+    greeting = f"Hi {recruiter_name.split()[0]}," if recruiter_name else "Hi,"
+    note = f"{greeting} I applied for the {job_title} role at {company}. With 2+ yrs optimizing {skills_str}, I'd love to connect and discuss how I can contribute to the team! Best, {name}"
+
+    if len(note) > 295:
+        note = f"{greeting} I applied to the {job_title} role at {company}. With hands-on DevOps & {skills_str} experience, I'd love to connect! Best, {name}"
+
+    return note[:300]
+
+
+async def connect_with_recruiter(recruiter_url: str, note: str = "", dry_run: bool = True) -> str:
+    """Send a personalized connection request with note to a recruiter or job poster.
+
+    Respects LinkedIn's 300 character limit on notes.
+    """
+    page = get_page()
+    if page is None:
+        return "error: Browser not started"
+
+    try:
+        if recruiter_url and not page.url.startswith(recruiter_url):
+            await page.goto(recruiter_url, wait_until="domcontentloaded", timeout=25000)
+            await human_delay()
+
+        # Look for Connect button
+        connect_btn = page.locator(
+            'button:has-text("Conectar"), button:has-text("Connect"), '
+            'button[aria-label*="Conectar con"], button[aria-label*="Invite to connect"]'
+        ).first
+
+        if await connect_btn.count() == 0 or not await connect_btn.is_visible():
+            # Check under "More actions" / "Más acciones"
+            more_btn = page.locator('button[aria-label*="Más acciones"], button[aria-label*="More actions"]').first
+            if await more_btn.count() > 0:
+                await more_btn.click()
+                await page.wait_for_timeout(1000)
+                connect_btn = page.locator('div[role="button"]:has-text("Conectar"), div[role="button"]:has-text("Connect")').first
+
+        if await connect_btn.count() == 0 or not await connect_btn.is_visible():
+            return "error: Could not find Connect button on profile"
+
+        await connect_btn.click()
+        await page.wait_for_timeout(1500)
+
+        # Handle 'Add a note' modal
+        add_note_btn = page.locator('button:has-text("Añadir una nota"), button:has-text("Add a note")').first
+        if note and await add_note_btn.count() > 0 and await add_note_btn.is_visible():
+            await add_note_btn.click()
+            await page.wait_for_timeout(1000)
+            textarea = page.locator('textarea[name="message"], textarea#custom-message').first
+            if await textarea.count() > 0:
+                clean_note = note[:300]
+                await textarea.fill(clean_note)
+                logger.info("Filled recruiter connection note: {}", clean_note)
+
+        if dry_run:
+            logger.info("Dry-run mode: Stopping before sending connection request")
+            return "dry_run_blocked: Connection request prepared with note."
+
+        send_btn = page.locator(
+            'button:has-text("Enviar"), button:has-text("Send"), button[aria-label*="Enviar ahora"], button[aria-label*="Send now"]'
+        ).first
+        if await send_btn.count() > 0:
+            await send_btn.click()
+            await page.wait_for_timeout(2000)
+            return "connection_request_sent"
+
+        return "error: Send button not found in connection modal"
+
+    except Exception as e:
+        logger.error("connect_with_recruiter failed: {}", e)
+        return f"error: {e}"
+

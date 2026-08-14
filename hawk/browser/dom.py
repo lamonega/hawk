@@ -152,6 +152,24 @@ async def snapshot() -> str:
                                 value = el.options[el.selectedIndex].text.trim();
                             }
 
+                            // Extract validation and error diagnostics
+                            const isAriaInvalid = el.getAttribute('aria-invalid') === 'true';
+                            const hasErrorClass = el.classList.contains('artdeco-text-input--error') ||
+                                                  el.classList.contains('fb-form-element--error') ||
+                                                  Boolean(el.closest('.artdeco-text-input--error, .fb-dash-form-element--error, [data-test-form-element-error]'));
+                            const isInvalid = isAriaInvalid || hasErrorClass;
+
+                            let elemError = '';
+                            if (isInvalid) {
+                                const group = el.closest('.jobs-easy-apply-form-section__group, .fb-dash-form-element, div[data-test-form-element], fieldset, div.artdeco-text-input--container');
+                                if (group) {
+                                    const errEl = group.querySelector('.artdeco-inline-feedback--error, .fb-dash-form-element__error-text, [role="alert"], [data-test-form-element-error]');
+                                    if (errEl) elemError = errEl.innerText.trim();
+                                }
+                            }
+
+                            const isRequired = Boolean(el.required || el.getAttribute('aria-required') === 'true' || cleanLabel.includes('*'));
+                            const placeholder = el.getAttribute('placeholder') || '';
                             const disabled = el.disabled || el.getAttribute('aria-disabled') === 'true';
                             const readonly = el.readOnly || el.getAttribute('aria-readonly') === 'true';
                             const href = el.getAttribute('href') || '';
@@ -165,28 +183,51 @@ async def snapshot() -> str:
                                 value: value,
                                 disabled: disabled,
                                 readonly: readonly,
+                                required: isRequired,
+                                invalid: isInvalid,
+                                error_message: elemError,
+                                placeholder: placeholder,
                                 href: href,
                                 type: el.type || '',
                             });
                         }
                     }
                 }
-                return results;
+
+                // Collect overall page / modal error alerts
+                const formErrors = [];
+                const errNodes = document.querySelectorAll(
+                    '.artdeco-inline-feedback--error, .fb-dash-form-element__error-text, ' +
+                    '[data-test-form-element-error], .jobs-easy-apply-modal__error-message, ' +
+                    'div.artdeco-modal__alert, [role="alert"]'
+                );
+                for (const node of errNodes) {
+                    const txt = (node.innerText || '').trim();
+                    if (txt && !formErrors.includes(txt) && txt.length < 300) {
+                        formErrors.push(txt);
+                    }
+                }
+
+                return { elements: results, form_errors: formErrors };
             }
             """
         )
 
+        elements_list = raw_elements.get("elements", []) if isinstance(raw_elements, dict) else raw_elements
+        form_errors_list = raw_elements.get("form_errors", []) if isinstance(raw_elements, dict) else []
+
         result = {
             "url": page.url,
             "title": await page.title(),
-            "elements": raw_elements,
+            "form_errors": form_errors_list,
+            "elements": elements_list,
         }
 
         # Store in persistent driver state
         driver_state._last_snapshot = result
-        driver_state._last_elements = raw_elements
+        driver_state._last_elements = elements_list
 
-        logger.debug("Snapshot: {} elements on {}", len(raw_elements), page.url)
+        logger.debug("Snapshot: {} elements, {} errors on {}", len(elements_list), len(form_errors_list), page.url)
         return json.dumps(result, indent=2)
 
     except Exception as e:

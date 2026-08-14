@@ -101,6 +101,23 @@ class Preferences(BaseModel):
     start_date: str = "Immediately"
 
 
+class ProjectStory(BaseModel):
+    name: str = ""
+    company_or_context: str = ""
+    challenge: str = ""
+    action: str = ""
+    tech_stack: list[str] = Field(default_factory=list)
+    result_metrics: str = ""
+
+
+class ScreeningPreferences(BaseModel):
+    b2b_contractor_ok: bool = True
+    us_work_auth: bool = False
+    requires_sponsorship: bool = False
+    timezone_overlap_hours: int = 4
+    willing_to_relocate: bool = False
+
+
 class UserProfile(BaseModel):
     completed_at: str = ""
     personal: PersonalInfo = Field(default_factory=PersonalInfo)
@@ -113,6 +130,8 @@ class UserProfile(BaseModel):
     salary: Salary = Field(default_factory=Salary)
     languages: dict[str, str] = Field(default_factory=dict)
     preferences: Preferences = Field(default_factory=Preferences)
+    screening_preferences: ScreeningPreferences = Field(default_factory=ScreeningPreferences)
+    project_stories: list[ProjectStory] = Field(default_factory=list)
     common_answers: dict[str, str] = Field(default_factory=dict)
 
 
@@ -132,6 +151,10 @@ def load_profile(path: Path | None = None) -> UserProfile:
             data[key] = {}
     if data.get("experience") is None:
         data["experience"] = []
+    if data.get("project_stories") is None:
+        data["project_stories"] = []
+    if data.get("screening_preferences") is None:
+        data["screening_preferences"] = {}
 
     return UserProfile(**data)
 
@@ -425,3 +448,70 @@ def learn_answer(profile: UserProfile, question: str, answer: str) -> UserProfil
         logger.info("Learned answer: '{}' -> '{}'", key, answer)
 
     return profile
+
+
+def query_knowledge_base(profile: UserProfile, query: str) -> dict[str, Any]:
+    """Retrieve grounded, factual candidate context matching a screening question or keyword.
+
+    Searches across project stories (STAR format), skills, work preferences,
+    authorization, and common answers to give the agent zero-hallucination ground truth.
+    """
+    q_tokens = set(re.findall(r"\w+", query.lower()))
+
+    # 1. Match project stories
+    matched_stories = []
+    for story in profile.project_stories:
+        score = 0
+        story_text = f"{story.name} {story.company_or_context} {story.challenge} {story.action} {' '.join(story.tech_stack)} {story.result_metrics}".lower()
+        for token in q_tokens:
+            if len(token) > 2 and token in story_text:
+                score += 1
+        if score > 0 or not q_tokens:
+            matched_stories.append({
+                "name": story.name,
+                "context": story.company_or_context,
+                "challenge": story.challenge,
+                "action": story.action,
+                "tech_stack": story.tech_stack,
+                "result": story.result_metrics,
+                "relevance_score": score,
+            })
+    matched_stories.sort(key=lambda s: s["relevance_score"], reverse=True)
+
+    # 2. Match relevant skills
+    matched_skills = {}
+    for skill_name, years in profile.skills.items():
+        if any(t in skill_name.lower() or skill_name.lower() in t for t in q_tokens if len(t) > 2):
+            matched_skills[skill_name] = years
+
+    # 3. Direct facts
+    direct_facts = {
+        "candidate_name": f"{profile.personal.first_name} {profile.personal.last_name}".strip(),
+        "current_title": profile.professional.current_title,
+        "current_company": profile.professional.current_company,
+        "years_of_experience": profile.professional.years_of_experience,
+        "location": f"{profile.personal.city}, {profile.personal.country}".strip(", "),
+        "education": f"{profile.education.degree} in {profile.education.field} ({profile.education.school})",
+        "work_authorization": {
+            "country": profile.work_authorization.country,
+            "authorized": profile.work_authorization.authorized,
+            "sponsorship_required": profile.work_authorization.sponsorship_required,
+            "b2b_contractor_ok": profile.screening_preferences.b2b_contractor_ok,
+            "us_work_auth": profile.screening_preferences.us_work_auth,
+        },
+        "salary_expected": profile.salary.expected,
+        "remote_only": profile.preferences.remote_only,
+        "notice_period": profile.preferences.notice_period,
+    }
+
+    # 4. Check if exact or fuzzy common answer exists
+    matched_answer = match_field(query, profile)
+
+    return {
+        "query": query,
+        "direct_answer": matched_answer,
+        "direct_facts": direct_facts,
+        "relevant_skills": matched_skills,
+        "matched_stories": matched_stories[:3],
+    }
+

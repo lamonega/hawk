@@ -418,3 +418,189 @@ async def generate_tailored_pdf(
 
     logger.info("Truthful resume generated at {}", pdf_path)
     return str(pdf_path.resolve())
+
+
+def render_ats_cover_letter_html(
+    profile_data: dict[str, Any] | None = None,
+    job_title: str = "",
+    company: str = "",
+    hiring_manager: str = "",
+    tailored_body_paragraphs: list[str] | str | None = None,
+) -> str:
+    """Render an ATS-compliant professional HTML cover letter.
+
+    Matches the typography and clean formatting of the ATS resume.
+    """
+    if profile_data is None:
+        p = load_profile().model_dump()
+    else:
+        p = profile_data
+    p_personal = p.get("personal", {})
+    p_links = p.get("links", {})
+    p_prof = p.get("professional", {})
+
+    first_name = p_personal.get("first_name", "")
+    last_name = p_personal.get("last_name", "")
+    full_name = f"{first_name} {last_name}".strip()
+
+    email = p_personal.get("email", "")
+    phone = p_personal.get("phone", "")
+    city = p_personal.get("city", "")
+    country = p_personal.get("country", "")
+    location_str = ", ".join(filter(None, [city, country]))
+    linkedin_url = p_links.get("linkedin", "")
+
+    contact_items = [c for c in [location_str, email, phone, linkedin_url] if c]
+    contact_html = " | ".join(contact_items)
+
+    salutation = f"Dear {hiring_manager}," if hiring_manager else (f"Dear Hiring Team at {company}," if company else "Dear Hiring Manager,")
+
+    paragraphs = []
+    if isinstance(tailored_body_paragraphs, str) and tailored_body_paragraphs:
+        paragraphs = [p.strip() for p in tailored_body_paragraphs.split("\n\n") if p.strip()]
+    elif isinstance(tailored_body_paragraphs, list) and tailored_body_paragraphs:
+        paragraphs = [str(p).strip() for p in tailored_body_paragraphs if str(p).strip()]
+    else:
+        # Default truthful cover letter body
+        summary = p_prof.get("summary", "")
+        paragraphs = [
+            f"I am writing to express my enthusiastic interest in the {job_title or 'open position'}{f' at {company}' if company else ''}. With hands-on experience designing reliable automation workflows, containerizing applications, and managing cloud and Linux infrastructure, I am confident in my ability to deliver immediate value to your team.",
+            summary or "In my recent roles, I have focused on automating CI/CD pipelines, maintaining high service availability, and implementing infrastructure as code to reduce deployment friction and eliminate drift.",
+            "I welcome the opportunity to discuss how my technical background, problem-solving mindset, and dedication to operational excellence align with your team's objectives. Thank you for your time and consideration.",
+        ]
+
+    body_html = "\n".join(f"<p>{para}</p>" for para in paragraphs)
+
+    from datetime import date
+    today_str = date.today().strftime("%B %d, %Y")
+
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<style>
+    @page {{
+        size: letter;
+        margin: 20mm 20mm 20mm 20mm;
+    }}
+    body {{
+        font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+        color: #222222;
+        font-size: 11pt;
+        line-height: 1.5;
+        margin: 0;
+        padding: 0;
+    }}
+    .header {{
+        text-align: center;
+        border-bottom: 1.5px solid #333333;
+        padding-bottom: 8px;
+        margin-bottom: 24px;
+    }}
+    .name {{
+        font-size: 20pt;
+        font-weight: 700;
+        color: #111111;
+        letter-spacing: 0.5px;
+        margin-bottom: 4px;
+    }}
+    .contact {{
+        font-size: 9.5pt;
+        color: #555555;
+    }}
+    .date-line {{
+        margin-bottom: 20px;
+        font-size: 10.5pt;
+        color: #444444;
+    }}
+    .recipient {{
+        margin-bottom: 20px;
+        font-size: 10.5pt;
+        color: #333333;
+    }}
+    .salutation {{
+        font-weight: 600;
+        margin-bottom: 14px;
+    }}
+    p {{
+        margin-top: 0;
+        margin-bottom: 14px;
+        text-align: justify;
+    }}
+    .signoff {{
+        margin-top: 24px;
+    }}
+    .signature-name {{
+        font-weight: 700;
+        margin-top: 8px;
+    }}
+</style>
+</head>
+<body>
+    <div class="header">
+        <div class="name">{full_name}</div>
+        <div class="contact">{contact_html}</div>
+    </div>
+
+    <div class="date-line">{today_str}</div>
+
+    <div class="salutation">{salutation}</div>
+
+    <div class="body-content">
+        {body_html}
+    </div>
+
+    <div class="signoff">
+        <div>Sincerely,</div>
+        <div class="signature-name">{full_name}</div>
+    </div>
+</body>
+</html>"""
+
+
+async def generate_tailored_cover_letter(
+    job_id: str,
+    job_title: str = "",
+    company: str = "",
+    hiring_manager: str = "",
+    tailored_body: list[str] | str | None = None,
+    output_dir: Path | None = None,
+) -> str:
+    """Generate and save an ATS-optimized tailored PDF cover letter.
+
+    Args:
+        job_id: Job ID used for file naming.
+        job_title: Target job title.
+        company: Target company name.
+        hiring_manager: Optional name of the hiring manager or recruiter.
+        tailored_body: Paragraphs tailored to the company and role.
+        output_dir: Destination directory. Defaults to output/cover_letters.
+
+    Returns:
+        Absolute path to the created PDF file.
+    """
+    profile = load_profile()
+    profile_data = profile.model_dump()
+
+    html = render_ats_cover_letter_html(
+        profile_data=profile_data,
+        job_title=job_title,
+        company=company,
+        hiring_manager=hiring_manager,
+        tailored_body_paragraphs=tailored_body,
+    )
+
+    if output_dir is None:
+        output_dir = PROJECT_ROOT / "output" / "cover_letters"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    clean_id = "".join(c for c in str(job_id) if c.isalnum() or c in ("-", "_"))
+    pdf_path = output_dir / f"cover_letter_{clean_id}.pdf"
+
+    result = await html_to_pdf(html, str(pdf_path))
+    if result.startswith("error"):
+        raise RuntimeError(f"Failed to compile tailored cover letter PDF: {result}")
+
+    logger.info("Truthful cover letter generated at {}", pdf_path)
+    return str(pdf_path.resolve())
+

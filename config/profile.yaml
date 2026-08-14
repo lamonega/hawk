@@ -1,51 +1,100 @@
-common_answers: {}
-completed_at: '2026-08-13T21:06:15+00:00'
-education:
-  degree: Bachelor's
-  field: Information Systems
-  graduation_year: '2027'
-  school: Facultad de Informática - UNLP
-experience: []
-languages:
-  english: Professional
-links:
-  github: github.com/lflamonega
-  linkedin: linkedin.com/in/lflamonega
-  portfolio: ''
-  website: ''
 personal:
-  city: Berisso
-  country: Argentina
-  email: lflamonega@gmail.com
   first_name: Laureano
   last_name: Francisco Lamonega
+  email: lflamonega@gmail.com
   phone: 221 695 9945
-  postal_code: '1923'
+  city: Berisso
   state: Buenos Aires
-preferences:
-  min_salary: ''
-  notice_period: 2 weeks
-  remote_only: true
-  start_date: Immediately
+  country: Argentina
+  postal_code: '1923'
+links:
+  linkedin: linkedin.com/in/lflamonega
+  github: github.com/lflamonega
+  portfolio: ''
+  website: ''
 professional:
   current_company: Municipalidad de Berisso
   current_title: DevOps Engineer
   headline: DevOps Engineer | CI/CD | Docker | Linux | AWS | Terraform
-  summary: DevOps Engineer with 2 years of experience designing CI/CD pipelines, containerizing
-    applications with Docker, and administering Linux servers. Currently working at
-    Municipalidad de Berisso building automation workflows with GitHub Actions, Forgejo
-    Actions, Nginx, and PowerShell/Bash scripting. Experienced with AWS (EC2, EKS,
-    Terraform), Nagios monitoring, and VMware/VirtualBox virtualization. Studying
-    Information Systems at UNLP.
+  summary: DevOps Engineer with 2 years of experience designing CI/CD pipelines, containerizing applications with Docker, and administering Linux servers. Currently working at Municipalidad de Berisso building automation workflows with GitHub Actions, Forgejo Actions, Nginx, and PowerShell/Bash scripting. Experienced with AWS (EC2, EKS, Terraform), Nagios monitoring, and VMware/VirtualBox virtualization. Studying Information Systems at UNLP.
   years_of_experience: '2'
-salary:
-  currency: USD
-  current: ''
-  expected: $950 USD/month
-  negotiable: true
-skills: {}
+education:
+  degree: Bachelor's
+  field: Information Systems
+  school: Facultad de Informática - UNLP
+  graduation_year: '2027'
 work_authorization:
   authorized: true
   country: Argentina
   sponsorship_required: false
   work_status: No authorization
+screening_preferences:
+  b2b_contractor_ok: true
+  us_work_auth: false
+  requires_sponsorship: false
+  timezone_overlap_hours: 5
+  willing_to_relocate: false
+skills:
+  docker: 2
+  linux: 3
+  bash: 2
+  powershell: 2
+  git: 3
+  github actions: 2
+  ci/cd: 2
+  terraform: 1
+  aws: 1
+  nginx: 2
+  nagios: 1
+  python: 1
+languages:
+  english: Professional
+  spanish: Native
+preferences:
+  remote_only: true
+  min_salary: '800'
+  notice_period: 2 weeks
+  start_date: Immediately
+salary:
+  currency: USD
+  current: ''
+  expected: $950 USD/month
+  negotiable: true
+project_stories:
+  - name: CI/CD Pipeline Automation with Forgejo & GitHub Actions
+    company_or_context: Municipalidad de Berisso
+    challenge: Software deployments and releases were executed manually, resulting in long downtime windows and frequent configuration drift across Linux servers.
+    action: Designed and implemented end-to-end CI/CD pipelines using GitHub Actions and self-hosted Forgejo runners. Automated container builds with Docker and multi-environment deployment scripts in Bash and PowerShell.
+    tech_stack:
+      - GitHub Actions
+      - Forgejo
+      - Docker
+      - Bash
+      - Linux
+      - Nginx
+    result_metrics: Reduced deployment times by 75% and eliminated deployment rollback incidents due to configuration drift.
+  - name: Infrastructure as Code & Cloud Orchestration
+    company_or_context: Academic & Independent Labs
+    challenge: Needed reproducible cloud environments for deploying containerized microservices and automated web services.
+    action: Provisioned AWS infrastructure (EC2 instances, VPC networking, IAM policies, and EKS clusters) utilizing modular Terraform scripts and Docker Compose orchestration.
+    tech_stack:
+      - AWS
+      - Terraform
+      - EC2
+      - Docker
+      - Linux
+    result_metrics: Achieved fully automated infrastructure provisioning in under 5 minutes with declarative state management.
+  - name: High-Availability Reverse Proxy & Monitoring Infrastructure
+    company_or_context: Municipalidad de Berisso
+    challenge: Lack of proactive alerting and centralized traffic routing across internal municipal services.
+    action: Configured Nginx reverse proxies with SSL termination, upstream load balancing, and integrated Nagios monitoring agents to alert on host resource consumption and service health.
+    tech_stack:
+      - Nginx
+      - Nagios
+      - Linux
+      - SSL/TLS
+    result_metrics: Increased internal service uptime to 99.8% with sub-minute alert notifications for server incidents.
+common_answers:
+  are you comfortable working remotely: 'Yes'
+  are you willing to work as an independent contractor b2b: 'Yes'
+completed_at: '2026-08-14T00:35:43+00:00'
