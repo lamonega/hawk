@@ -10,12 +10,11 @@ from urllib.parse import quote
 
 from loguru import logger
 
-from hawk.browser import browser
+from hawk.browser import DEFAULT_NAV_TIMEOUT_MS, browser
 from hawk.config import Settings, UserProfile, get_settings, load_profile, match_field
 
 # ── 1. Search & Filter Constants ──────────────────────────────────────────────
 LINKEDIN_JOBS_SEARCH_URL = "https://www.linkedin.com/jobs/search/?"
-LINKEDIN_JOB_VIEW_URL_PREFIX = "https://www.linkedin.com/jobs/view/"
 
 EXPERIENCE_MAP: dict[str, str] = {
     "internship": "1",
@@ -40,14 +39,7 @@ DATE_FILTER_MAP: dict[str, str] = {
     "month": "r2592000",
 }
 
-# ── 2. Delays & Timeouts ───────────────────────────────────────────────────────
-DEFAULT_ACTION_DELAY_MIN: float = 1.5
-DEFAULT_ACTION_DELAY_MAX: float = 2.5
-DEFAULT_SUBMIT_DELAY_MIN: float = 2.0
-DEFAULT_SUBMIT_DELAY_MAX: float = 3.0
-NAVIGATE_TIMEOUT_MS: int = 25000
-
-# ── 3. CSS Selectors ──────────────────────────────────────────────────────────
+# ── 2. CSS Selectors ──────────────────────────────────────────────────────────
 EASY_APPLY_BUTTON_SELECTORS: list[str] = [
     ".jobs-apply-button--top-card button",
     "button.jobs-apply-button",
@@ -58,8 +50,9 @@ EASY_APPLY_BUTTON_SELECTORS: list[str] = [
 CONNECT_BUTTON_SELECTORS: str = 'button:has-text("Conectar"), button:has-text("Connect")'
 ADD_NOTE_BUTTON_SELECTORS: str = 'button:has-text("Añadir nota"), button:has-text("Add a note")'
 SEND_BUTTON_SELECTORS: str = 'button:has-text("Enviar"), button:has-text("Send")'
+NOTE_TEXTAREA_SELECTOR: str = 'textarea[name="message"]'
 
-# ── 4. UI Text Indicators ─────────────────────────────────────────────────────
+# ── 3. UI Text Indicators ─────────────────────────────────────────────────────
 EASY_APPLY_TEXT_INDICATORS: tuple[str, ...] = (
     "easy apply",
     "solicitud sencilla",
@@ -80,31 +73,56 @@ BUTTON_ACTIONS: list[tuple[str, tuple[str, ...]]] = [
 AFFIRMATIVE_VALUES: tuple[str, ...] = ("yes", "sí", "si", "true", "1")
 NEGATIVE_VALUES: tuple[str, ...] = ("no", "false", "0")
 
+# ── 4. Recruiter Pitch Constants ──────────────────────────────────────────────
+MAX_NOTE_LENGTH: int = 299
+MAX_PITCH_SKILLS: int = 3
+SPANISH_DETECTION_WORDS: tuple[str, ...] = (
+    "ingeniero",
+    "desarrollador",
+    "remoto",
+    "sistemas",
+    "analista",
+    "diseñador",
+    "consultor",
+)
+
+# ── 5. Interaction Response Markers ──────────────────────────────────────────
+_MARKER_UPLOADED: str = "uploaded"
+_MARKER_SELECTED: str = "selected"
+_MARKER_TYPED: str = "typed"
+
+# ── 6. Unchecked Checkbox Indicators ─────────────────────────────────────────
+_CHECKBOX_UNCHECKED_VALUES: frozenset[str] = frozenset({"false", "0", ""})
+
 
 # ── Helper Functions ──────────────────────────────────────────────────────────
 
-def _is_job_allowed(job: dict[str, Any], settings: Settings) -> bool:
-    """Check whether a job matches blacklist constraints."""
-    company = job.get("company", "").lower()
-    role = job.get("role", "").lower()
-    location = job.get("location", "").lower()
+def _matches_blacklist(value: str, blacklist: list[str]) -> bool:
+    """Return True if any non-empty blacklist entry is a substring of value (case-insensitive)."""
+    lower = value.lower()
+    return any(entry.lower() in lower for entry in blacklist if entry)
 
-    if any(b.lower() in company for b in settings.linkedin.company_blacklist if b):
-        return False
-    if any(b.lower() in role for b in settings.linkedin.title_blacklist if b):
-        return False
-    if any(b.lower() in location for b in settings.linkedin.location_blacklist if b):
-        return False
-    return True
+
+def _is_job_allowed(job: dict[str, Any], settings: Settings) -> bool:
+    """Return True if the job passes all blacklist constraints."""
+    bl = settings.linkedin
+    return not (
+        _matches_blacklist(job.get("company", ""), bl.company_blacklist)
+        or _matches_blacklist(job.get("role", ""), bl.title_blacklist)
+        or _matches_blacklist(job.get("location", ""), bl.location_blacklist)
+    )
 
 
 async def _uncheck_follow_company(elements: list[dict[str, Any]]) -> None:
-    """Automatically uncheck 'Follow company' checkboxes in Easy Apply modals."""
+    """Uncheck 'Follow company' checkboxes in Easy Apply modals."""
     for el in elements:
         name = el.get("name", "").lower()
-        if any(indicator in name for indicator in FOLLOW_TEXT_INDICATORS):
-            if el.get("type") == "checkbox" and el.get("value") not in ("false", "0", ""):
-                await browser.interact(el["index"], "click")
+        if (
+            any(indicator in name for indicator in FOLLOW_TEXT_INDICATORS)
+            and el.get("type") == "checkbox"
+            and el.get("value") not in _CHECKBOX_UNCHECKED_VALUES
+        ):
+            await browser.interact(el["index"], "click")
 
 
 async def _autofill_element(
@@ -112,7 +130,11 @@ async def _autofill_element(
     profile: UserProfile,
     resume_path: str | None,
 ) -> dict[str, str] | None:
-    """Autofill a single form element using candidate profile data."""
+    """Autofill a single form element using candidate profile data.
+
+    Returns a ``{"field": ..., "value": ...}`` dict on success, or ``None`` if
+    the element was skipped or the interaction produced no result.
+    """
     tag = el.get("tag", "")
     role = el.get("role", "")
     name = el.get("name", "")
@@ -126,17 +148,14 @@ async def _autofill_element(
     # File upload (Resume PDF)
     if el_type == "file" and resume_path and Path(resume_path).exists():
         res = await browser.interact(index, "upload", resume_path)
-        if "uploaded" in res:
-            return {"field": "resume", "value": resume_path}
-        return None
+        return {"field": "resume", "value": resume_path} if _MARKER_UPLOADED in res else None
 
     # Dropdowns / Selects / Comboboxes
     if tag == "select" or role == "combobox":
         answer = match_field(name, profile)
         if answer:
             res = await browser.interact(index, "select", str(answer))
-            if "selected" in res:
-                return {"field": name, "value": str(answer)}
+            return {"field": name, "value": str(answer)} if _MARKER_SELECTED in res else None
         return None
 
     # Radio Buttons
@@ -161,8 +180,7 @@ async def _autofill_element(
         answer = match_field(name, profile)
         if answer:
             res = await browser.interact(index, "type", str(answer))
-            if "typed" in res:
-                return {"field": name, "value": str(answer)}
+            return {"field": name, "value": str(answer)} if _MARKER_TYPED in res else None
 
     return None
 
@@ -170,7 +188,7 @@ async def _autofill_element(
 def _detect_action_button(
     elements: list[dict[str, Any]],
 ) -> tuple[str | None, dict[str, Any] | None]:
-    """Identify the primary step advancement button in priority order (submit, review, next)."""
+    """Identify the primary step-advancement button in priority order (submit > review > next)."""
     for action, keywords in BUTTON_ACTIONS:
         for el in elements:
             if el.get("role") == "button":
@@ -187,7 +205,7 @@ def build_search_url(
     locations: str | list[str] | None = None,
     easy_apply: bool = True,
 ) -> str:
-    """Construct a LinkedIn job search URL with active settings filters."""
+    """Construct a LinkedIn job search URL applying all active settings filters."""
     settings = get_settings()
     pos_list = [positions] if isinstance(positions, str) else (positions or settings.linkedin.positions)
     loc_list = [locations] if isinstance(locations, str) else (locations or settings.linkedin.locations)
@@ -217,7 +235,7 @@ def build_search_url(
 
 
 async def human_delay(min_s: float | None = None, max_s: float | None = None) -> None:
-    """Randomized humanized delay between actions."""
+    """Sleep for a randomized humanized duration driven by apply settings."""
     settings = get_settings()
     delay = random.uniform(min_s or settings.apply.min_delay, max_s or settings.apply.max_delay)
     await asyncio.sleep(delay)
@@ -228,13 +246,13 @@ async def search(
     locations: str | list[str] | None = None,
     easy_apply: bool = True,
 ) -> str:
-    """Navigate to LinkedIn search with configured parameters."""
+    """Navigate to LinkedIn job search with the configured search parameters."""
     url = build_search_url(positions=positions, locations=locations, easy_apply=easy_apply)
     return await browser.navigate(url)
 
 
 async def extract_jobs_list() -> list[dict[str, Any]]:
-    """Extract job listings from search results (supporting standard DOM and 2026 SDUI DOM)."""
+    """Extract job listings from search results (supports standard DOM and 2026 SDUI DOM)."""
     page = browser.get_page()
     if not page:
         return []
@@ -311,7 +329,7 @@ async def extract_jobs_list() -> list[dict[str, Any]]:
 
 
 async def extract_job_details() -> dict[str, Any]:
-    """Extract job description and details from current active page."""
+    """Extract job description and metadata from the currently active page."""
     page = browser.get_page()
     if not page:
         return {}
@@ -362,18 +380,18 @@ async def extract_job_details() -> dict[str, Any]:
 
 
 async def click_easy_apply() -> str:
-    """Click the Easy Apply button on a job listing."""
+    """Click the Easy Apply button on a job listing page."""
     page = browser.get_page()
     if not page:
         return "error: browser not started"
 
     try:
-        # Strategy 1: CSS Locators
+        # Strategy 1: CSS locators
         for sel in EASY_APPLY_BUTTON_SELECTORS:
             btn = page.locator(sel).first
             if await btn.count() > 0 and await btn.is_visible():
                 await btn.click()
-                await human_delay(DEFAULT_ACTION_DELAY_MIN, DEFAULT_ACTION_DELAY_MAX)
+                await human_delay()
                 return "clicked_easy_apply"
 
         # Strategy 2: Accessibility snapshot fallback
@@ -382,10 +400,10 @@ async def click_easy_apply() -> str:
             name = el.get("name", "").lower()
             if el.get("role") == "button" and any(k in name for k in EASY_APPLY_TEXT_INDICATORS):
                 await browser.interact(el["index"], "click")
-                await human_delay(DEFAULT_ACTION_DELAY_MIN, DEFAULT_ACTION_DELAY_MAX)
+                await human_delay()
                 return "clicked_easy_apply"
 
-        # Check if already applied
+        # Check if already applied before reporting not-found
         details = await extract_job_details()
         if details.get("already_applied"):
             return "already_applied"
@@ -401,7 +419,16 @@ async def apply_step(
     auto_advance: bool = True,
     dry_run: bool | None = None,
 ) -> dict[str, Any]:
-    """Inspect and autofill the current step of the Easy Apply wizard."""
+    """Inspect and autofill the current step of the Easy Apply wizard.
+
+    Args:
+        resume_path: Absolute path to the tailored PDF resume to upload.
+        auto_advance: When True, click the step-advancement button after filling.
+        dry_run: Override the settings ``apply.dry_run`` flag for this call only.
+
+    Returns:
+        A status dict containing ``"status"``, ``"filled"``, and optionally ``"errors"``.
+    """
     page = browser.get_page()
     if not page:
         return {"status": "error", "message": "Browser not started"}
@@ -427,19 +454,19 @@ async def apply_step(
     if not auto_advance:
         return {"status": "filled", "filled": filled_items, "errors": form_errors}
 
-    # 3. Detect and handle step advancement button
+    # 3. Detect and handle step-advancement button
     action, btn = _detect_action_button(elements)
 
     if action == "submit" and btn:
         if is_dry_run:
             return {"status": "ready_to_submit_dry_run_blocked", "filled": filled_items}
         await browser.interact(btn["index"], "click")
-        await human_delay(DEFAULT_SUBMIT_DELAY_MIN, DEFAULT_SUBMIT_DELAY_MAX)
+        await human_delay()
         return {"status": "submitted", "filled": filled_items}
 
     if action in ("review", "next") and btn:
         await browser.interact(btn["index"], "click")
-        await human_delay(DEFAULT_ACTION_DELAY_MIN, DEFAULT_ACTION_DELAY_MAX)
+        await human_delay()
         return {"status": "advanced", "filled": filled_items}
 
     return {"status": "no_advance_button", "filled": filled_items, "errors": form_errors}
@@ -452,14 +479,29 @@ def generate_recruiter_pitch(
     top_skills: list[str] | None = None,
     language: str = "auto",
 ) -> str:
-    """Generate concise, personalized LinkedIn recruiter connection note (<300 chars limit)."""
+    """Generate a concise, personalized LinkedIn recruiter connection note.
+
+    The note is capped at ``MAX_NOTE_LENGTH`` characters to comply with LinkedIn's
+    connection message limit. Language is inferred from the job posting when
+    ``language="auto"``.
+
+    Args:
+        job_title: Target job title from the posting.
+        company: Target company name.
+        recruiter_name: Full name of the recruiter (first name is extracted automatically).
+        top_skills: Explicit list of skills to highlight; falls back to profile skills.
+        language: ``"es"``/``"spanish"``/``"español"`` for Spanish, ``"auto"`` to infer.
+
+    Returns:
+        A ready-to-send connection note string.
+    """
     profile = load_profile()
     name = profile.personal.first_name or "Candidate"
 
     if top_skills:
-        skills_list = top_skills[:3]
+        skills_list = top_skills[:MAX_PITCH_SKILLS]
     elif profile.skills:
-        skills_list = [k.capitalize() for k in profile.skills.keys()][:3]
+        skills_list = [k.capitalize() for k in profile.skills.keys()][:MAX_PITCH_SKILLS]
     elif profile.professional.headline:
         skills_list = [profile.professional.headline]
     else:
@@ -467,12 +509,10 @@ def generate_recruiter_pitch(
 
     skills_str = ", ".join(filter(None, skills_list))
 
+    posting_text = f"{job_title} {company}".lower()
     is_es = language.lower() in ("es", "spanish", "español") or (
         language == "auto"
-        and any(
-            w in f"{job_title} {company}".lower()
-            for w in ("ingeniero", "desarrollador", "remoto", "sistemas", "analista", "diseñador", "consultor")
-        )
+        and any(w in posting_text for w in SPANISH_DETECTION_WORDS)
     )
     first_name = recruiter_name.split()[0] if recruiter_name else ""
 
@@ -485,43 +525,60 @@ def generate_recruiter_pitch(
         skills_part = f" With a background in {skills_str}," if skills_str else ""
         note = f"{greeting} I applied for the {job_title} role at {company}.{skills_part} I'd love to connect and discuss how I can contribute! Best, {name}"
 
-    return note.strip()[:299]
+    return note.strip()[:MAX_NOTE_LENGTH]
 
 
-async def connect_recruiter(recruiter_url: str, note: str = "", dry_run: bool = True) -> str:
-    """Send connection request to recruiter with optional personalized note."""
+async def connect_recruiter(
+    recruiter_url: str,
+    note: str = "",
+    dry_run: bool | None = None,
+) -> str:
+    """Send a LinkedIn connection request to a recruiter with an optional personalized note.
+
+    Args:
+        recruiter_url: Full LinkedIn profile URL of the recruiter.
+        note: Pre-generated connection note (≤ ``MAX_NOTE_LENGTH`` chars).
+        dry_run: Override the settings ``apply.dry_run`` flag for this call only.
+
+    Returns:
+        A status string describing the outcome.
+    """
     page = browser.get_page()
     if not page:
         return "error: browser not started"
 
+    settings = get_settings()
+    is_dry_run = dry_run if dry_run is not None else settings.apply.dry_run
+
     try:
         if recruiter_url and not page.url.startswith(recruiter_url):
-            await page.goto(recruiter_url, wait_until="domcontentloaded", timeout=NAVIGATE_TIMEOUT_MS)
+            await page.goto(recruiter_url, wait_until="domcontentloaded", timeout=DEFAULT_NAV_TIMEOUT_MS)
             await human_delay()
 
-        if dry_run:
+        if is_dry_run:
             return f"dry_run: connection note prepared for {recruiter_url} -> '{note}'"
 
         connect_btn = page.locator(CONNECT_BUTTON_SELECTORS).first
-        if await connect_btn.count() > 0 and await connect_btn.is_visible():
-            await connect_btn.click()
-            await page.wait_for_timeout(1000)
+        if not (await connect_btn.count() > 0 and await connect_btn.is_visible()):
+            return "error: Connect button not found"
 
-            if note:
-                add_note = page.locator(ADD_NOTE_BUTTON_SELECTORS).first
-                if await add_note.count() > 0:
-                    await add_note.click()
-                    await page.locator('textarea[name="message"]').fill(note)
-                    send_btn = page.locator(SEND_BUTTON_SELECTORS).first
-                    await send_btn.click()
-                    return "connection_sent_with_note"
+        await connect_btn.click()
+        await human_delay()
 
-            send_btn = page.locator(SEND_BUTTON_SELECTORS).first
-            if await send_btn.count() > 0:
-                await send_btn.click()
+        if note:
+            add_note = page.locator(ADD_NOTE_BUTTON_SELECTORS).first
+            if await add_note.count() > 0:
+                await add_note.click()
+                await page.locator(NOTE_TEXTAREA_SELECTOR).fill(note)
+                await page.locator(SEND_BUTTON_SELECTORS).first.click()
+                return "connection_sent_with_note"
+
+        send_btn = page.locator(SEND_BUTTON_SELECTORS).first
+        if await send_btn.count() > 0:
+            await send_btn.click()
             return "connection_sent"
 
-        return "error: Connect button not found"
+        return "error: Send button not found"
     except Exception as e:
         logger.warning("connect_recruiter failed: {}", e)
         return f"error connecting with recruiter: {e}"

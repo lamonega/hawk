@@ -14,10 +14,21 @@ from loguru import logger
 
 from hawk.config import PROJECT_ROOT
 
+__all__ = [
+    "DEFAULT_DB_NAME",
+    "DEFAULT_OUTPUT_DIR",
+    "init_db",
+    "insert_job",
+    "get_job",
+    "insert_application",
+    "get_application",
+    "get_daily_count",
+    "increment_daily_count",
+]
+
 # ── Database Constants ─────────────────────────────────────────────────────────
 
 DEFAULT_DB_NAME = "hawk.db"
-DB_NAME = DEFAULT_DB_NAME
 DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "output"
 
 # ── Table Schemas ─────────────────────────────────────────────────────────────
@@ -57,41 +68,39 @@ CREATE TABLE IF NOT EXISTS daily_runs (
 );
 """
 
-INIT_SCHEMA_SQL = f"{JOBS_TABLE_SCHEMA}\n{APPLICATIONS_TABLE_SCHEMA}\n{DAILY_RUNS_TABLE_SCHEMA}"
+INIT_SCHEMA_SQL = JOBS_TABLE_SCHEMA + APPLICATIONS_TABLE_SCHEMA + DAILY_RUNS_TABLE_SCHEMA
 
 
 # ── Helpers & Context Management ──────────────────────────────────────────────
 
 def _utc_now_iso() -> str:
-    """Return current UTC timestamp formatted as an ISO 8601 string."""
+    """Return the current UTC timestamp as an ISO 8601 string."""
     return datetime.now(timezone.utc).isoformat()
 
 
 def _utc_today_str() -> str:
-    """Return current UTC date formatted as YYYY-MM-DD."""
+    """Return the current UTC date as a ``YYYY-MM-DD`` string."""
     return datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
 
 def get_db_path(output_dir: Path | None = None) -> Path:
-    """Resolve and ensure the directory for the SQLite database file exists."""
+    """Resolve the SQLite database path, creating the directory if needed."""
     target_dir = output_dir or DEFAULT_OUTPUT_DIR
     target_dir.mkdir(parents=True, exist_ok=True)
     return target_dir / DEFAULT_DB_NAME
 
 
-def get_connection(output_dir: Path | None = None) -> sqlite3.Connection:
-    """Open and configure a raw SQLite connection."""
-    conn = sqlite3.connect(str(get_db_path(output_dir)))
+@contextmanager
+def db_session(output_dir: Path | None = None) -> Iterator[sqlite3.Connection]:
+    """Context manager that yields a configured, transactional SQLite connection.
+
+    PRAGMAs applied: ``journal_mode=WAL`` and ``foreign_keys=ON``.
+    The connection is committed on clean exit and always closed afterward.
+    """
+    conn = sqlite3.connect(get_db_path(output_dir))
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
-    return conn
-
-
-@contextmanager
-def db_session(output_dir: Path | None = None) -> Iterator[sqlite3.Connection]:
-    """Context manager providing a transactional SQLite connection that auto-closes."""
-    conn = get_connection(output_dir)
     try:
         with conn:
             yield conn
@@ -102,10 +111,11 @@ def db_session(output_dir: Path | None = None) -> Iterator[sqlite3.Connection]:
 # ── Database Operations ───────────────────────────────────────────────────────
 
 def init_db(output_dir: Path | None = None) -> None:
-    """Initialize SQLite database tables."""
+    """Create all database tables if they do not already exist."""
+    db_path = get_db_path(output_dir)
     with db_session(output_dir) as conn:
         conn.executescript(INIT_SCHEMA_SQL)
-    logger.debug("Database initialized at {}", get_db_path(output_dir))
+    logger.debug("Database initialized at {}", db_path)
 
 
 def insert_job(
@@ -118,7 +128,7 @@ def insert_job(
     recruiter_link: str = "",
     output_dir: Path | None = None,
 ) -> None:
-    """Insert or replace a job record."""
+    """Insert or replace a job record in the database."""
     with db_session(output_dir) as conn:
         conn.execute(
             """
@@ -140,7 +150,7 @@ def insert_job(
 
 
 def get_job(job_id: str, output_dir: Path | None = None) -> dict[str, Any] | None:
-    """Retrieve a job by its unique ID, or None if not found."""
+    """Retrieve a job by ID, or ``None`` if not found."""
     with db_session(output_dir) as conn:
         row = conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
         return dict(row) if row else None
@@ -156,10 +166,10 @@ def insert_application(
     metadata: dict[str, Any] | None = None,
     output_dir: Path | None = None,
 ) -> bool:
-    """Insert a new application record if not already present.
+    """Insert a new application record, silently ignoring duplicates.
 
     Returns:
-        True if the application was inserted, False if it was ignored (already exists).
+        ``True`` if the record was inserted; ``False`` if it already existed.
     """
     with db_session(output_dir) as conn:
         cursor = conn.execute(
@@ -183,22 +193,25 @@ def insert_application(
 
 
 def get_application(job_id: str, output_dir: Path | None = None) -> dict[str, Any] | None:
-    """Retrieve an application record by its associated job ID."""
+    """Retrieve an application record by job ID, or ``None`` if not found."""
     with db_session(output_dir) as conn:
-        row = conn.execute("SELECT * FROM applications WHERE job_id = ?", (job_id,)).fetchone()
+        row = conn.execute(
+            "SELECT * FROM applications WHERE job_id = ?", (job_id,)
+        ).fetchone()
         return dict(row) if row else None
 
 
 def get_daily_count(output_dir: Path | None = None) -> int:
-    """Get the number of applications processed today in UTC."""
-    today = _utc_today_str()
+    """Return the number of applications recorded today (UTC)."""
     with db_session(output_dir) as conn:
-        row = conn.execute("SELECT count FROM daily_runs WHERE date = ?", (today,)).fetchone()
+        row = conn.execute(
+            "SELECT count FROM daily_runs WHERE date = ?", (_utc_today_str(),)
+        ).fetchone()
         return int(row["count"]) if row else 0
 
 
 def increment_daily_count(output_dir: Path | None = None) -> int:
-    """Increment today's application count and return the updated count."""
+    """Increment today's application count and return the updated value."""
     today = _utc_today_str()
     with db_session(output_dir) as conn:
         conn.execute(
@@ -208,5 +221,7 @@ def increment_daily_count(output_dir: Path | None = None) -> int:
             """,
             (today,),
         )
-        row = conn.execute("SELECT count FROM daily_runs WHERE date = ?", (today,)).fetchone()
+        row = conn.execute(
+            "SELECT count FROM daily_runs WHERE date = ?", (today,)
+        ).fetchone()
         return int(row["count"]) if row else 0
