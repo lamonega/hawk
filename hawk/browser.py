@@ -14,9 +14,15 @@ from playwright_stealth import Stealth
 
 from hawk.config import PROJECT_ROOT, get_settings
 
-# --- Browser & Session Configuration Constants ---
+# --- Session & LinkedIn URLs ---
 _STATE_FILE: str = "storage_state.json"
+LINKEDIN_BASE_URL: str = "https://www.linkedin.com"
+LINKEDIN_FEED_URL: str = "https://www.linkedin.com/feed/"
+LI_AT_COOKIE: str = "li_at"
+AUTH_URL_KEYWORDS: tuple[str, ...] = ("login", "authwall", "checkpoint")
+SESSION_INDICATORS: tuple[str, ...] = ("feed", "/in/")
 
+# --- Browser Environment & Fingerprint Constants ---
 _USER_AGENTS: list[str] = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
@@ -24,6 +30,8 @@ _USER_AGENTS: list[str] = [
 ]
 
 DEFAULT_VIEWPORT: dict[str, int] = {"width": 1920, "height": 1080}
+DEFAULT_LOCALE: str = "en-US"
+DEFAULT_TIMEZONE_ID: str = "America/New_York"
 
 CHROMIUM_LAUNCH_ARGS: list[str] = [
     "--disable-blink-features=AutomationControlled",
@@ -33,13 +41,15 @@ CHROMIUM_LAUNCH_ARGS: list[str] = [
     "--window-size=1920,1080",
 ]
 
-# --- Timeouts (Milliseconds & Seconds) ---
+# --- Timeouts & Delays ---
 DEFAULT_NAV_TIMEOUT_MS: int = 30_000
 DEFAULT_SESSION_TIMEOUT_MS: int = 20_000
 DEFAULT_ACTION_TIMEOUT_MS: int = 3_000
 DEFAULT_PDF_TIMEOUT_MS: int = 15_000
 DEFAULT_LOGIN_TIMEOUT_SEC: int = 120
 QUICK_LOCATOR_TIMEOUT_MS: int = 300
+LOGIN_POLL_INTERVAL_SEC: float = 2.0
+NAV_SETTLE_DELAY_SEC: float = 1.0
 
 # --- PDF Rendering Constants ---
 PDF_PAGE_FORMAT: str = "A4"
@@ -50,9 +60,7 @@ PDF_MARGINS: dict[str, str] = {
     "right": "15mm",
 }
 
-# --- Selectors & Navigation Keywords ---
-AUTH_URL_KEYWORDS: tuple[str, ...] = ("login", "authwall", "checkpoint")
-
+# --- Selectors ---
 OVERLAY_DISMISS_SELECTORS: list[str] = [
     'button[aria-label="Descartar"]',
     'button[aria-label="Dismiss"]',
@@ -131,6 +139,15 @@ _DOM_SNAPSHOT_JS: str = r"""
 
     const getElementLabel = (el) => {
         let label = el.getAttribute('aria-label') || el.innerText?.trim() || el.getAttribute('placeholder') || '';
+        if (!label) {
+            const labelledBy = el.getAttribute('aria-labelledby');
+            if (labelledBy) {
+                try {
+                    const refEl = document.getElementById(labelledBy);
+                    if (refEl) label = refEl.innerText?.trim() || '';
+                } catch (_) {}
+            }
+        }
         if (!label && el.id) {
             try {
                 const lbl = document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
@@ -257,11 +274,12 @@ class BrowserManager:
 
     def _get_storage_state_path(self, profile_dir: str | Path | None = None) -> Path:
         """Resolve absolute path to session storage state file."""
-        base_dir = (
-            PROJECT_ROOT / profile_dir
-            if profile_dir
-            else PROJECT_ROOT / get_settings().browser.profile_dir
-        )
+        if profile_dir:
+            base = Path(profile_dir)
+            base_dir = base if base.is_absolute() else PROJECT_ROOT / base
+        else:
+            p_dir = Path(get_settings().browser.profile_dir)
+            base_dir = p_dir if p_dir.is_absolute() else PROJECT_ROOT / p_dir
         return base_dir / _STATE_FILE
 
     @staticmethod
@@ -300,59 +318,65 @@ class BrowserManager:
         state_path.parent.mkdir(parents=True, exist_ok=True)
 
         ua = random.choice(_USER_AGENTS)
-        self._pw = await Stealth().use_async(async_playwright()).start()
-        self._browser = await self._pw.chromium.launch(
-            headless=is_headless,
-            args=CHROMIUM_LAUNCH_ARGS,
-        )
+        try:
+            self._pw = await Stealth().use_async(async_playwright()).start()
+            self._browser = await self._pw.chromium.launch(
+                headless=is_headless,
+                args=CHROMIUM_LAUNCH_ARGS,
+            )
 
-        ctx_kwargs: dict[str, Any] = {
-            "user_agent": ua,
-            "viewport": DEFAULT_VIEWPORT,
-            "locale": "en-US",
-            "timezone_id": "America/New_York",
-        }
-        if state_path.exists():
-            ctx_kwargs["storage_state"] = str(state_path)
-            logger.info("Loaded session from {}", state_path)
+            ctx_kwargs: dict[str, Any] = {
+                "user_agent": ua,
+                "viewport": DEFAULT_VIEWPORT,
+                "locale": DEFAULT_LOCALE,
+                "timezone_id": DEFAULT_TIMEZONE_ID,
+            }
+            if state_path.exists():
+                ctx_kwargs["storage_state"] = str(state_path)
+                logger.info("Loaded session from {}", state_path)
 
-        self._context = await self._browser.new_context(**ctx_kwargs)
-        self._page = await self._context.new_page()
-        await self._page.add_init_script(_STEALTH_JS)
+            self._context = await self._browser.new_context(**ctx_kwargs)
+            self._page = await self._context.new_page()
+            await self._page.add_init_script(_STEALTH_JS)
 
-        logger.info("Browser launched (headless={}, ua={})", is_headless, ua[:40])
-        return self._page
+            logger.info("Browser launched (headless={}, ua={})", is_headless, ua[:40])
+            return self._page
+        except Exception as e:
+            logger.error("Failed to launch browser: {}", e)
+            await self.close()
+            raise
 
     async def close(self) -> None:
         """Save storage state and gracefully terminate browser resources."""
-        if self._context:
-            try:
-                state_path = self._get_storage_state_path()
-                state_path.parent.mkdir(parents=True, exist_ok=True)
-                await self._context.storage_state(path=str(state_path))
-            except Exception as e:
-                logger.debug("Failed saving storage state during close: {}", e)
-            try:
-                await self._context.close()
-            except Exception as e:
-                logger.debug("Error closing browser context: {}", e)
+        try:
+            if self._context:
+                try:
+                    state_path = self._get_storage_state_path()
+                    state_path.parent.mkdir(parents=True, exist_ok=True)
+                    await self._context.storage_state(path=str(state_path))
+                except Exception as e:
+                    logger.debug("Failed saving storage state during close: {}", e)
+                try:
+                    await self._context.close()
+                except Exception as e:
+                    logger.debug("Error closing browser context: {}", e)
 
-        if self._browser:
-            try:
-                await self._browser.close()
-            except Exception as e:
-                logger.debug("Error closing browser instance: {}", e)
+            if self._browser:
+                try:
+                    await self._browser.close()
+                except Exception as e:
+                    logger.debug("Error closing browser instance: {}", e)
 
-        if self._pw:
-            try:
-                await self._pw.stop()
-            except Exception as e:
-                logger.debug("Error stopping playwright engine: {}", e)
-
-        self._page = None
-        self._context = None
-        self._browser = None
-        self._pw = None
+            if self._pw:
+                try:
+                    await self._pw.stop()
+                except Exception as e:
+                    logger.debug("Error stopping playwright engine: {}", e)
+        finally:
+            self._page = None
+            self._context = None
+            self._browser = None
+            self._pw = None
 
     async def check_session(self) -> str:
         """Check if logged in to LinkedIn by examining cookies and navigation state."""
@@ -360,11 +384,14 @@ class BrowserManager:
         if not page:
             return "no_browser"
         try:
-            cookies = await page.context.cookies(["https://www.linkedin.com"])
-            has_li_at = any(c.get("name") == "li_at" and bool(c.get("value")) for c in cookies)
+            cookies = await page.context.cookies([LINKEDIN_BASE_URL])
+            has_li_at = any(
+                c.get("name") == LI_AT_COOKIE and bool(c.get("value"))
+                for c in cookies
+            )
 
             await page.goto(
-                "https://www.linkedin.com/feed/",
+                LINKEDIN_FEED_URL,
                 wait_until="domcontentloaded",
                 timeout=DEFAULT_SESSION_TIMEOUT_MS,
             )
@@ -373,7 +400,7 @@ class BrowserManager:
 
             if any(keyword in url for keyword in AUTH_URL_KEYWORDS):
                 return "not_logged_in"
-            if has_li_at or "feed" in url or "/in/" in url:
+            if has_li_at or any(ind in url for ind in SESSION_INDICATORS):
                 return "logged_in"
             return "not_logged_in"
         except Exception as e:
@@ -388,15 +415,15 @@ class BrowserManager:
 
         start = asyncio.get_running_loop().time()
         while (asyncio.get_running_loop().time() - start) < timeout:
-            cookies = await page.context.cookies(["https://www.linkedin.com"])
-            if any(c.get("name") == "li_at" and bool(c.get("value")) for c in cookies):
+            cookies = await page.context.cookies([LINKEDIN_BASE_URL])
+            if any(c.get("name") == LI_AT_COOKIE and bool(c.get("value")) for c in cookies):
                 state_path = self._get_storage_state_path()
                 state_path.parent.mkdir(parents=True, exist_ok=True)
                 await self._context.storage_state(path=str(state_path))
                 logger.info("Session saved to {}", state_path)
                 await self.dismiss_overlays()
                 return "logged_in"
-            await asyncio.sleep(2.0)
+            await asyncio.sleep(LOGIN_POLL_INTERVAL_SEC)
         return "timeout"
 
     async def navigate(self, url: str) -> str:
@@ -410,7 +437,7 @@ class BrowserManager:
                 wait_until="domcontentloaded",
                 timeout=DEFAULT_NAV_TIMEOUT_MS,
             )
-            await asyncio.sleep(1.0)
+            await asyncio.sleep(NAV_SETTLE_DELAY_SEC)
             await self.dismiss_overlays()
             return f"navigated: {url}"
         except Exception as e:
@@ -468,7 +495,7 @@ class BrowserManager:
         locator = page.locator(f'[data-hawk-id="{element_index}"]').first
 
         try:
-            if act == "click":
+            if act in ("click", "check", "uncheck"):
                 await locator.scroll_into_view_if_needed()
                 await locator.click(timeout=DEFAULT_ACTION_TIMEOUT_MS)
                 return f"clicked index {element_index}"
@@ -545,7 +572,10 @@ class BrowserManager:
             temp_browser = await p.chromium.launch(headless=True)
             try:
                 temp_page = await temp_browser.new_page()
-                await self._render_page_to_pdf(temp_page, data_url, out)
+                try:
+                    await self._render_page_to_pdf(temp_page, data_url, out)
+                finally:
+                    await temp_page.close()
             finally:
                 await temp_browser.close()
 

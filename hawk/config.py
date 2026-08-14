@@ -12,17 +12,24 @@ import yaml
 from loguru import logger
 from pydantic import BaseModel, Field
 
-# ── Paths ────────────────────────────────────────────────────────────────────
+# ── Paths & Filenames ────────────────────────────────────────────────────────
 
 PROJECT_ROOT: Path = Path(__file__).resolve().parent.parent
 CONFIG_DIR: Path = PROJECT_ROOT / "config"
 
-SETTINGS_PATH: Path = CONFIG_DIR / "settings.yaml"
-SETTINGS_EXAMPLE_PATH: Path = CONFIG_DIR / "settings.example.yaml"
-PROFILE_PATH: Path = CONFIG_DIR / "profile.yaml"
-PROFILE_EXAMPLE_PATH: Path = CONFIG_DIR / "profile.example.yaml"
-RESUME_PATH: Path = CONFIG_DIR / "plain_text_resume.yaml"
-RESUME_EXAMPLE_PATH: Path = CONFIG_DIR / "plain_text_resume.example.yaml"
+SETTINGS_FILENAME: str = "settings.yaml"
+SETTINGS_EXAMPLE_FILENAME: str = "settings.example.yaml"
+PROFILE_FILENAME: str = "profile.yaml"
+PROFILE_EXAMPLE_FILENAME: str = "profile.example.yaml"
+RESUME_FILENAME: str = "plain_text_resume.yaml"
+RESUME_EXAMPLE_FILENAME: str = "plain_text_resume.example.yaml"
+
+SETTINGS_PATH: Path = CONFIG_DIR / SETTINGS_FILENAME
+SETTINGS_EXAMPLE_PATH: Path = CONFIG_DIR / SETTINGS_EXAMPLE_FILENAME
+PROFILE_PATH: Path = CONFIG_DIR / PROFILE_FILENAME
+PROFILE_EXAMPLE_PATH: Path = CONFIG_DIR / PROFILE_EXAMPLE_FILENAME
+RESUME_PATH: Path = CONFIG_DIR / RESUME_FILENAME
+RESUME_EXAMPLE_PATH: Path = CONFIG_DIR / RESUME_EXAMPLE_FILENAME
 
 # ── Constants & Defaults ─────────────────────────────────────────────────────
 
@@ -50,6 +57,7 @@ LIST_SETTING_KEYS: frozenset[str] = frozenset({
 })
 
 DEFAULT_EXPERIENCE_LEVELS: list[str] = ["entry", "associate", "mid_senior_level"]
+DEFAULT_LOCATIONS: list[str] = ["remote"]
 
 DEFAULT_JOB_TYPES: dict[str, bool] = {
     "full_time": True,
@@ -87,7 +95,7 @@ _WHITESPACE_REGEX: re.Pattern[str] = re.compile(r"\s+")
 
 # ── YAML Helpers ─────────────────────────────────────────────────────────────
 
-def _read_yaml(path: Path) -> dict[str, Any]:
+def read_yaml(path: Path) -> dict[str, Any]:
     """Read a YAML file into a dictionary, returning an empty dict on failure."""
     if not path.exists():
         return {}
@@ -99,11 +107,16 @@ def _read_yaml(path: Path) -> dict[str, Any]:
         return {}
 
 
-def _write_yaml(path: Path, data: dict[str, Any]) -> None:
+def write_yaml(path: Path, data: dict[str, Any]) -> None:
     """Serialize and write a dictionary to a YAML file with unicode support."""
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         yaml.dump(data, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+
+
+# Backward compatibility aliases
+_read_yaml = read_yaml
+_write_yaml = write_yaml
 
 
 # ── Settings Models ──────────────────────────────────────────────────────────
@@ -116,7 +129,7 @@ class LinkedInSettings(BaseModel):
     job_types: dict[str, bool] = Field(default_factory=lambda: dict(DEFAULT_JOB_TYPES))
     date_filter: str = DEFAULT_DATE_FILTER
     positions: list[str] = Field(default_factory=list)
-    locations: list[str] = Field(default_factory=lambda: ["remote"])
+    locations: list[str] = Field(default_factory=lambda: list(DEFAULT_LOCATIONS))
     location_blacklist: list[str] = Field(default_factory=list)
     distance: int = DEFAULT_DISTANCE
     company_blacklist: list[str] = Field(default_factory=list)
@@ -162,25 +175,32 @@ _cached_settings_mtime: float = 0.0
 def load_settings(config_dir: Path | None = None) -> Settings:
     """Load settings from config/settings.yaml with fallback to settings.example.yaml."""
     cfg_dir = config_dir or CONFIG_DIR
-    target = cfg_dir / "settings.yaml"
+    target = cfg_dir / SETTINGS_FILENAME
     if not target.exists():
-        target = cfg_dir / "settings.example.yaml"
-    data = _read_yaml(target)
+        target = cfg_dir / SETTINGS_EXAMPLE_FILENAME
+    data = read_yaml(target)
     return Settings(**data)
 
 
-def get_settings() -> Settings:
+def get_settings(config_dir: Path | None = None) -> Settings:
     """Get cached settings with automatic reload when the file is modified on disk."""
     global _cached_settings, _cached_settings_mtime
-    target = SETTINGS_PATH if SETTINGS_PATH.exists() else SETTINGS_EXAMPLE_PATH
+    cfg_dir = config_dir or CONFIG_DIR
+    target = cfg_dir / SETTINGS_FILENAME
+    if not target.exists():
+        target = cfg_dir / SETTINGS_EXAMPLE_FILENAME
+
     try:
         mtime = target.stat().st_mtime if target.exists() else 0.0
     except Exception:
         mtime = 0.0
 
-    if _cached_settings is None or mtime > _cached_settings_mtime:
-        _cached_settings = load_settings()
-        _cached_settings_mtime = mtime
+    if _cached_settings is None or mtime > _cached_settings_mtime or config_dir is not None:
+        settings = load_settings(config_dir)
+        if config_dir is None:
+            _cached_settings = settings
+            _cached_settings_mtime = mtime
+        return settings
     return _cached_settings
 
 
@@ -188,13 +208,14 @@ def save_settings(settings: Settings, config_dir: Path | None = None) -> None:
     """Save settings to config/settings.yaml and update cached instance."""
     global _cached_settings, _cached_settings_mtime
     cfg_dir = config_dir or CONFIG_DIR
-    target = cfg_dir / "settings.yaml"
-    _write_yaml(target, settings.model_dump())
-    _cached_settings = settings
-    try:
-        _cached_settings_mtime = target.stat().st_mtime
-    except Exception:
-        _cached_settings_mtime = 0.0
+    target = cfg_dir / SETTINGS_FILENAME
+    write_yaml(target, settings.model_dump())
+    if config_dir is None:
+        _cached_settings = settings
+        try:
+            _cached_settings_mtime = target.stat().st_mtime
+        except Exception:
+            _cached_settings_mtime = 0.0
 
 
 def _coerce_setting_value(key: str, value: Any) -> Any:
@@ -211,14 +232,26 @@ def _coerce_setting_value(key: str, value: Any) -> Any:
         return False
     if val_stripped.isdigit():
         return int(val_stripped)
-    if key in LIST_SETTING_KEYS and "," in val_stripped:
-        return [item.strip() for item in val_stripped.split(",") if item.strip()]
+    try:
+        return float(val_stripped)
+    except ValueError:
+        pass
+
+    if key in LIST_SETTING_KEYS:
+        if "," in val_stripped:
+            return [item.strip() for item in val_stripped.split(",") if item.strip()]
+        if val_stripped:
+            return [val_stripped]
+        return []
 
     return value
 
 
 def update_setting(field_path: str, value: Any, config_dir: Path | None = None) -> Settings:
     """Update a specific setting using dot-notation (e.g. 'apply.daily_max', 'linkedin.positions')."""
+    if not field_path:
+        return load_settings(config_dir)
+
     settings = load_settings(config_dir)
     data = settings.model_dump()
 
@@ -351,7 +384,7 @@ def load_profile(path: Path | None = None) -> UserProfile:
     """Load user profile from config/profile.yaml with fallback to profile.example.yaml."""
     if path is None:
         path = PROFILE_PATH if PROFILE_PATH.exists() else PROFILE_EXAMPLE_PATH
-    data = _read_yaml(path)
+    data = read_yaml(path)
 
     # Ensure nested dictionary and list collections default properly
     for dict_key in ("skills", "languages", "common_answers"):
@@ -367,9 +400,10 @@ def load_profile(path: Path | None = None) -> UserProfile:
 def save_profile(profile: UserProfile, path: Path | None = None, sync_resume: bool = True) -> None:
     """Save user profile to YAML and optionally synchronize plain text resume."""
     target_path = path or PROFILE_PATH
-    _write_yaml(target_path, profile.model_dump())
+    write_yaml(target_path, profile.model_dump())
     if sync_resume:
-        sync_profile_to_resume(profile)
+        resume_target = (target_path.parent / RESUME_FILENAME) if path else RESUME_PATH
+        sync_profile_to_resume(profile, resume_path=resume_target)
 
 
 def get_profile_value(profile: UserProfile, field_path: str) -> str:
@@ -391,8 +425,8 @@ def get_profile_value(profile: UserProfile, field_path: str) -> str:
 def sync_profile_to_resume(profile: UserProfile, resume_path: Path | None = None) -> None:
     """Synchronize UserProfile into plain_text_resume.yaml following DRY principles."""
     target_path = resume_path or RESUME_PATH
-    source = target_path if target_path.exists() else (target_path.parent / "plain_text_resume.example.yaml")
-    data = _read_yaml(source)
+    source = target_path if target_path.exists() else (target_path.parent / RESUME_EXAMPLE_FILENAME)
+    data = read_yaml(source)
 
     # 1. Sync personal information
     personal = data.get("personal_information") or {}
@@ -444,7 +478,7 @@ def sync_profile_to_resume(profile: UserProfile, resume_path: Path | None = None
     for key in ("projects", "achievements", "certifications", "interests"):
         data.setdefault(key, [])
 
-    _write_yaml(target_path, data)
+    write_yaml(target_path, data)
 
 
 # ── Field Matching & Knowledge Base ──────────────────────────────────────────
@@ -514,14 +548,14 @@ def match_field(question: str, profile: UserProfile) -> str | None:
             if val:
                 return val
 
-    # 3. Skills match (e.g. "How many years of Python experience do you have?")
+    # 3. Skills match with word boundary (e.g. "How many years of Python experience do you have?")
     for skill_name, years in profile.skills.items():
-        if skill_name.lower() in q:
+        if re.search(rf"\b{re.escape(skill_name.lower())}\b", q):
             return str(years)
 
-    # 4. Languages match (e.g. "English proficiency level")
+    # 4. Languages match with word boundary (e.g. "English proficiency level")
     for lang, level in profile.languages.items():
-        if lang.lower() in q:
+        if re.search(rf"\b{re.escape(lang.lower())}\b", q):
             return level
 
     return None

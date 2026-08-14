@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from typing import Any
 
 from loguru import logger
@@ -11,17 +10,15 @@ from mcp.server.fastmcp import FastMCP
 
 from hawk.browser import EASY_APPLY_MODAL_SELECTOR, browser
 from hawk.config import (
-    UserProfile,
     get_settings,
     learn_answer,
     load_profile,
-    match_field,
     query_knowledge_base,
     save_profile,
     sync_profile_to_resume,
-    update_setting,
 )
 from hawk.linkedin import (
+    MAX_NOTE_LENGTH,
     apply_step,
     click_easy_apply,
     connect_recruiter,
@@ -38,7 +35,6 @@ from hawk.storage import (
     increment_daily_count,
     init_db,
     insert_application,
-    insert_job,
 )
 
 mcp = FastMCP("hawk")
@@ -46,10 +42,12 @@ init_db()
 
 # ── Supported Operation Constants ─────────────────────────────────────────────
 SUPPORTED_SESSION_ACTIONS: tuple[str, ...] = ("launch", "status", "wait_login", "close")
+SUPPORTED_INTERACT_ACTIONS: tuple[str, ...] = ("click", "type", "fill", "select", "upload")
+SUPPORTED_EXTRACT_MODES: tuple[str, ...] = ("jobs_list", "job_details", "auto")
 SUPPORTED_DOC_TYPES: tuple[str, ...] = ("resume", "cv", "cover_letter", "letter")
 SUPPORTED_PROFILE_ACTIONS: tuple[str, ...] = ("get", "update", "learn", "query_kb", "sync")
 SUPPORTED_STATS_ACTIONS: tuple[str, ...] = ("daily_count", "get_app", "save_app", "get_job")
-RECRUITER_NOTE_MAX_CHARS: int = 299
+RECRUITER_NOTE_MAX_CHARS: int = MAX_NOTE_LENGTH
 
 
 # ── DRY Helper Utilities ───────────────────────────────────────────────────────
@@ -92,6 +90,32 @@ def _parse_paragraphs(val: str | list[str] | None) -> list[str] | None:
     return None
 
 
+def _update_nested_field(root: Any, field_path: str, value: Any) -> str | None:
+    """Update a nested attribute or dictionary key using dot-notation.
+
+    Returns:
+        None on success, or an error message string on failure.
+    """
+    parts = field_path.strip().split(".")
+    obj: Any = root
+    for part in parts[:-1]:
+        if hasattr(obj, part):
+            obj = getattr(obj, part)
+        elif isinstance(obj, dict) and part in obj:
+            obj = obj[part]
+        else:
+            return f"Cannot resolve nested path '{part}' in '{field_path}'"
+
+    last = parts[-1]
+    if hasattr(obj, last):
+        setattr(obj, last, value)
+        return None
+    elif isinstance(obj, dict):
+        obj[last] = value
+        return None
+    return f"Field '{last}' cannot be set on target object"
+
+
 # ── 1. Browser Tools ───────────────────────────────────────────────────────────
 
 @mcp.tool()
@@ -112,6 +136,11 @@ async def browser_session(
     """
     try:
         act = action.lower().strip()
+        if act not in SUPPORTED_SESSION_ACTIONS:
+            return _error_json(
+                f"Unknown session action '{action}'",
+                supported_actions=list(SUPPORTED_SESSION_ACTIONS),
+            )
         if act == "launch":
             await browser.launch(headless=headless)
             return _to_json({"action": "launch", "status": "browser_launched", "headless": headless})
@@ -146,10 +175,11 @@ async def browser_navigate(url: str) -> str:
     try:
         if not url or not url.strip():
             return _error_json("URL parameter is required and cannot be empty")
-        res = await browser.navigate(url.strip())
+        target_url = url.strip()
+        res = await browser.navigate(target_url)
         if res.startswith("error:"):
-            return _error_json(res.replace("error:", "").strip(), url=url)
-        return _to_json({"status": "navigated", "url": url.strip(), "detail": res})
+            return _error_json(res.replace("error:", "").strip(), url=target_url)
+        return _to_json({"status": "navigated", "url": target_url, "detail": res})
     except Exception as exc:
         logger.error("browser_navigate failed for {}: {}", url, exc)
         return _error_json(str(exc), url=url)
@@ -191,12 +221,18 @@ async def browser_interact(
     """
     try:
         act = action.lower().strip()
+        if act not in SUPPORTED_INTERACT_ACTIONS:
+            return _error_json(
+                f"Unknown interaction action '{action}'",
+                supported_actions=list(SUPPORTED_INTERACT_ACTIONS),
+                element_index=element_index,
+            )
         res = await browser.interact(element_index, act, value)
         if res.startswith("error:"):
             return _error_json(
                 res.replace("error:", "").strip(),
                 element_index=element_index,
-                action=action,
+                action=act,
             )
         return _to_json({
             "status": "success",
@@ -220,15 +256,16 @@ async def browser_screenshot(output_path: str = "") -> str:
         JSON string with screenshot status and file path or base64 data.
     """
     try:
-        res = await browser.screenshot(output_path=output_path or None)
+        clean_path = output_path.strip()
+        res = await browser.screenshot(output_path=clean_path or None)
         if res.startswith("error:"):
-            return _error_json(res.replace("error:", "").strip())
-        if output_path:
+            return _error_json(res.replace("error:", "").strip(), output_path=clean_path)
+        if clean_path:
             return _to_json({"status": "saved", "path": res})
         return _to_json({"status": "captured", "base64_length": len(res), "image_base64": res})
     except Exception as exc:
         logger.error("browser_screenshot failed: {}", exc)
-        return _error_json(str(exc))
+        return _error_json(str(exc), output_path=output_path)
 
 
 # ── 2. LinkedIn Tools ─────────────────────────────────────────────────────────
@@ -282,8 +319,14 @@ async def linkedin_extract(mode: str = "auto") -> str:
         if not page:
             return _error_json("Browser is not started. Launch browser first with browser_session(action='launch').")
 
-        url = page.url
         extract_mode = mode.lower().strip()
+        if extract_mode not in SUPPORTED_EXTRACT_MODES:
+            return _error_json(
+                f"Unknown extract mode '{mode}'",
+                supported_modes=list(SUPPORTED_EXTRACT_MODES),
+            )
+
+        url = page.url
         if extract_mode == "jobs_list" or (extract_mode == "auto" and "jobs/search" in url):
             jobs = await extract_jobs_list()
             return _to_json(jobs)
@@ -292,7 +335,7 @@ async def linkedin_extract(mode: str = "auto") -> str:
             return _to_json(details)
     except Exception as exc:
         logger.error("linkedin_extract failed: {}", exc)
-        return _error_json(str(exc))
+        return _error_json(str(exc), mode=mode)
 
 
 @mcp.tool()
@@ -316,10 +359,13 @@ async def linkedin_apply_step(
     """
     try:
         page = browser.get_page()
-        if page and await page.locator(EASY_APPLY_MODAL_SELECTOR).count() == 0:
+        if not page:
+            return _error_json("Browser is not started. Launch browser first with browser_session(action='launch').")
+
+        if await page.locator(EASY_APPLY_MODAL_SELECTOR).count() == 0:
             click_res = await click_easy_apply()
             if click_res != "clicked_easy_apply":
-                return _to_json({"status": click_res, "detail": "Could not open Easy Apply modal"})
+                return _error_json(f"Could not open Easy Apply modal: {click_res}", status=click_res)
 
         res = await apply_step(
             resume_path=resume_path.strip() or None,
@@ -363,8 +409,9 @@ async def linkedin_connect_recruiter(
     """
     try:
         if not recruiter_url or not recruiter_url.strip():
-            return _error_json("recruiter_url parameter is required")
+            return _error_json("recruiter_url parameter is required and cannot be empty")
 
+        target_url = recruiter_url.strip()
         note = custom_note.strip() or generate_recruiter_pitch(
             job_title=job_title.strip(),
             company=company.strip(),
@@ -373,10 +420,12 @@ async def linkedin_connect_recruiter(
         )
         note = note[:RECRUITER_NOTE_MAX_CHARS]
 
-        res = await connect_recruiter(recruiter_url=recruiter_url.strip(), note=note, dry_run=dry_run)
+        res = await connect_recruiter(recruiter_url=target_url, note=note, dry_run=dry_run)
+        if res.startswith("error:"):
+            return _error_json(res.replace("error:", "").strip(), recruiter_url=target_url)
         return _to_json({
             "status": res,
-            "recruiter_url": recruiter_url.strip(),
+            "recruiter_url": target_url,
             "note": note,
             "dry_run": dry_run,
         })
@@ -423,14 +472,29 @@ async def hawk_generate_document(
         JSON string with generated PDF file path, document type, job ID, and status.
     """
     try:
+        if not job_id or not job_id.strip():
+            return _error_json("job_id parameter is required and cannot be empty", doc_type=doc_type)
+        if not job_title or not job_title.strip():
+            return _error_json("job_title parameter is required and cannot be empty", doc_type=doc_type, job_id=job_id)
+
+        clean_job_id = job_id.strip()
+        clean_job_title = job_title.strip()
+        clean_company = company.strip()
         dtype = doc_type.lower().strip()
+        if dtype not in SUPPORTED_DOC_TYPES:
+            return _error_json(
+                f"Unknown doc_type '{doc_type}'",
+                supported_types=list(SUPPORTED_DOC_TYPES),
+                job_id=clean_job_id,
+            )
+
         skills_list = _parse_list(highlighted_skills)
         paragraphs_list = _parse_paragraphs(body_paragraphs)
 
         if dtype in ("resume", "cv"):
             pdf_path = await generate_tailored_pdf(
-                job_id=job_id.strip(),
-                job_title=job_title.strip(),
+                job_id=clean_job_id,
+                job_title=clean_job_title,
                 tailored_headline=tailored_headline.strip(),
                 tailored_summary=tailored_summary.strip(),
                 highlighted_skills=skills_list,
@@ -439,15 +503,21 @@ async def hawk_generate_document(
             return _to_json({
                 "status": "generated",
                 "doc_type": "resume",
-                "job_id": job_id.strip(),
+                "job_id": clean_job_id,
                 "path": pdf_path,
                 "language": language,
             })
         elif dtype in ("cover_letter", "letter"):
+            if not clean_company:
+                return _error_json(
+                    "company parameter is required for cover letters",
+                    doc_type=doc_type,
+                    job_id=clean_job_id,
+                )
             pdf_path = await generate_tailored_cover_letter(
-                job_id=job_id.strip(),
-                job_title=job_title.strip(),
-                company=company.strip(),
+                job_id=clean_job_id,
+                job_title=clean_job_title,
+                company=clean_company,
                 hiring_manager=hiring_manager.strip(),
                 tailored_body=paragraphs_list,
                 language=language,
@@ -455,8 +525,8 @@ async def hawk_generate_document(
             return _to_json({
                 "status": "generated",
                 "doc_type": "cover_letter",
-                "job_id": job_id.strip(),
-                "company": company.strip(),
+                "job_id": clean_job_id,
+                "company": clean_company,
                 "path": pdf_path,
                 "language": language,
             })
@@ -496,6 +566,12 @@ async def hawk_profile(
     """
     try:
         act = action.lower().strip()
+        if act not in SUPPORTED_PROFILE_ACTIONS:
+            return _error_json(
+                f"Unknown profile action '{action}'",
+                supported_actions=list(SUPPORTED_PROFILE_ACTIONS),
+            )
+
         profile = load_profile()
 
         if act == "get":
@@ -504,31 +580,21 @@ async def hawk_profile(
         elif act == "update":
             if not field or not field.strip():
                 return _error_json("Field path is required for profile update (e.g. 'personal.phone')")
-            parts = field.strip().split(".")
-            obj: Any = profile
-            for part in parts[:-1]:
-                if hasattr(obj, part):
-                    obj = getattr(obj, part)
-                elif isinstance(obj, dict) and part in obj:
-                    obj = obj[part]
-                else:
-                    return _error_json(f"Cannot resolve nested path '{part}' in '{field}'")
-            last = parts[-1]
-            if hasattr(obj, last):
-                setattr(obj, last, value)
-            elif isinstance(obj, dict):
-                obj[last] = value
-            else:
-                return _error_json(f"Field '{last}' cannot be set on target object")
+            clean_field = field.strip()
+            err = _update_nested_field(profile, clean_field, value)
+            if err:
+                return _error_json(err, field=clean_field)
             save_profile(profile)
-            return _to_json({"status": "updated", "field": field.strip(), "value": value})
+            return _to_json({"status": "updated", "field": clean_field, "value": value})
 
         elif act == "learn":
-            if not field or not field.strip() or not value:
+            if not field or not field.strip() or not value or not value.strip():
                 return _error_json("Both 'field' (question) and 'value' (answer) are required for 'learn'")
-            learn_answer(profile, field.strip(), value.strip())
+            clean_field = field.strip()
+            clean_value = value.strip()
+            learn_answer(profile, clean_field, clean_value)
             save_profile(profile)
-            return _to_json({"status": "learned", "question": field.strip(), "answer": value.strip()})
+            return _to_json({"status": "learned", "question": clean_field, "answer": clean_value})
 
         elif act == "query_kb":
             search_query = query.strip() or field.strip()
@@ -577,6 +643,12 @@ async def hawk_stats(
     """
     try:
         act = action.lower().strip()
+        if act not in SUPPORTED_STATS_ACTIONS:
+            return _error_json(
+                f"Unknown stats action '{action}'",
+                supported_actions=list(SUPPORTED_STATS_ACTIONS),
+            )
+
         settings = get_settings()
 
         if act == "daily_count":
@@ -597,20 +669,22 @@ async def hawk_stats(
         elif act == "save_app":
             if not job_id or not job_id.strip():
                 return _error_json("job_id is required for 'save_app'")
+            clean_job_id = job_id.strip()
+            clean_status = status.strip()
             ok = insert_application(
-                job_id=job_id.strip(),
-                status=status.strip(),
+                job_id=clean_job_id,
+                status=clean_status,
                 score=score,
                 resume_path=resume_path.strip(),
                 dry_run=dry_run,
             )
-            if not dry_run and status == "submitted":
+            if not dry_run and clean_status == "submitted":
                 increment_daily_count()
             return _to_json({
                 "status": "saved",
                 "inserted": ok,
-                "job_id": job_id.strip(),
-                "app_status": status.strip(),
+                "job_id": clean_job_id,
+                "app_status": clean_status,
                 "score": score,
                 "dry_run": dry_run,
             })
@@ -637,4 +711,3 @@ def create_server() -> FastMCP:
 
 if __name__ == "__main__":
     mcp.run()
-

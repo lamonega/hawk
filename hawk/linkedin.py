@@ -14,7 +14,9 @@ from hawk.browser import DEFAULT_NAV_TIMEOUT_MS, browser
 from hawk.config import Settings, UserProfile, get_settings, load_profile, match_field
 
 # ── 1. Search & Filter Constants ──────────────────────────────────────────────
-LINKEDIN_JOBS_SEARCH_URL = "https://www.linkedin.com/jobs/search/?"
+LINKEDIN_JOBS_SEARCH_URL: str = "https://www.linkedin.com/jobs/search/?"
+DEFAULT_SEARCH_LOCATION: str = "remote"
+EASY_APPLY_SEARCH_PARAM: str = "f_LF=f_AL"
 
 EXPERIENCE_MAP: dict[str, str] = {
     "internship": "1",
@@ -52,7 +54,7 @@ ADD_NOTE_BUTTON_SELECTORS: str = 'button:has-text("Añadir nota"), button:has-te
 SEND_BUTTON_SELECTORS: str = 'button:has-text("Enviar"), button:has-text("Send")'
 NOTE_TEXTAREA_SELECTOR: str = 'textarea[name="message"]'
 
-# ── 3. UI Text Indicators ─────────────────────────────────────────────────────
+# ── 3. UI Text & Action Indicators ────────────────────────────────────────────
 EASY_APPLY_TEXT_INDICATORS: tuple[str, ...] = (
     "easy apply",
     "solicitud sencilla",
@@ -64,18 +66,38 @@ FOLLOW_TEXT_INDICATORS: tuple[str, ...] = (
     "seguir",
 )
 
+ACTION_SUBMIT: str = "submit"
+ACTION_REVIEW: str = "review"
+ACTION_NEXT: str = "next"
+
 BUTTON_ACTIONS: list[tuple[str, tuple[str, ...]]] = [
-    ("submit", ("submit", "enviar solicitud", "enviar candidatura")),
-    ("review", ("review", "revisar")),
-    ("next", ("next", "siguiente", "continue", "continuar", "avançar")),
+    (ACTION_SUBMIT, ("submit", "enviar solicitud", "enviar candidatura")),
+    (ACTION_REVIEW, ("review", "revisar")),
+    (ACTION_NEXT, ("next", "siguiente", "continue", "continuar", "avançar")),
 ]
 
 AFFIRMATIVE_VALUES: tuple[str, ...] = ("yes", "sí", "si", "true", "1")
 NEGATIVE_VALUES: tuple[str, ...] = ("no", "false", "0")
 
-# ── 4. Recruiter Pitch Constants ──────────────────────────────────────────────
+# ── 4. Status & Result Constants ──────────────────────────────────────────────
+STATUS_FILLED: str = "filled"
+STATUS_SUBMITTED: str = "submitted"
+STATUS_ADVANCED: str = "advanced"
+STATUS_READY_TO_SUBMIT_DRY_RUN: str = "ready_to_submit_dry_run_blocked"
+STATUS_NO_ADVANCE_BUTTON: str = "no_advance_button"
+STATUS_ERROR: str = "error"
+
+RES_CLICKED_EASY_APPLY: str = "clicked_easy_apply"
+RES_ALREADY_APPLIED: str = "already_applied"
+RES_CONNECTION_SENT_WITH_NOTE: str = "connection_sent_with_note"
+RES_CONNECTION_SENT: str = "connection_sent"
+
+# ── 5. Recruiter Pitch Constants ──────────────────────────────────────────────
 MAX_NOTE_LENGTH: int = 299
 MAX_PITCH_SKILLS: int = 3
+DEFAULT_CANDIDATE_NAME: str = "Candidate"
+AUTO_LANGUAGE: str = "auto"
+SPANISH_LANGUAGES: tuple[str, ...] = ("es", "spanish", "español")
 SPANISH_DETECTION_WORDS: tuple[str, ...] = (
     "ingeniero",
     "desarrollador",
@@ -97,15 +119,17 @@ _PITCH_NOTE_TEMPLATE_EN: str = (
 _PITCH_SKILLS_PART_ES: str = " Con experiencia en {skills},"
 _PITCH_SKILLS_PART_EN: str = " With a background in {skills},"
 
-# ── 5. Interaction Response Markers ──────────────────────────────────────────
+# ── 6. Interaction & Field Response Markers ───────────────────────────────────
+FIELD_RESUME: str = "resume"
 _MARKER_UPLOADED: str = "uploaded"
 _MARKER_SELECTED: str = "selected"
 _MARKER_TYPED: str = "typed"
 
-# ── 6. Unchecked Checkbox Indicators ─────────────────────────────────────────
 _CHECKBOX_UNCHECKED_VALUES: frozenset[str] = frozenset({"false", "0", ""})
 
 # ── 7. JavaScript DOM Extraction Scripts ──────────────────────────────────────
+MAX_JOB_DESCRIPTION_LENGTH: int = 5000
+
 _EXTRACT_JOBS_LIST_JS: str = r"""
 () => {
     const results = [];
@@ -262,7 +286,7 @@ async def _autofill_element(
     # File upload (Resume PDF)
     if el_type == "file" and resume_path and Path(resume_path).exists():
         res = await browser.interact(index, "upload", resume_path)
-        return {"field": "resume", "value": resume_path} if _MARKER_UPLOADED in res else None
+        return {"field": FIELD_RESUME, "value": resume_path} if _MARKER_UPLOADED in res else None
 
     # Dropdowns / Selects / Comboboxes
     if tag == "select" or role == "combobox":
@@ -325,11 +349,11 @@ def build_search_url(
     loc_list = [locations] if isinstance(locations, str) else (locations or settings.linkedin.locations)
 
     keywords = pos_list[0] if pos_list else ""
-    location = loc_list[0] if loc_list else "remote"
+    location = loc_list[0] if loc_list else DEFAULT_SEARCH_LOCATION
 
     params = [f"keywords={quote(keywords)}", f"location={quote(location)}"]
     if easy_apply:
-        params.append("f_LF=f_AL")
+        params.append(EASY_APPLY_SEARCH_PARAM)
 
     if settings.linkedin.experience_levels:
         codes = [EXPERIENCE_MAP[e] for e in settings.linkedin.experience_levels if e in EXPERIENCE_MAP]
@@ -407,7 +431,7 @@ async def click_easy_apply() -> str:
             if await btn.count() > 0 and await btn.is_visible():
                 await btn.click()
                 await human_delay()
-                return "clicked_easy_apply"
+                return RES_CLICKED_EASY_APPLY
 
         # Strategy 2: Accessibility snapshot fallback
         snap = await browser.snapshot()
@@ -416,12 +440,12 @@ async def click_easy_apply() -> str:
             if el.get("role") == "button" and any(k in name for k in EASY_APPLY_TEXT_INDICATORS):
                 await browser.interact(el["index"], "click")
                 await human_delay()
-                return "clicked_easy_apply"
+                return RES_CLICKED_EASY_APPLY
 
         # Check if already applied before reporting not-found
         details = await extract_job_details()
         if details.get("already_applied"):
-            return "already_applied"
+            return RES_ALREADY_APPLIED
 
         return "error: Easy Apply button not found"
     except Exception as e:
@@ -446,7 +470,7 @@ async def apply_step(
     """
     page = browser.get_page()
     if not page:
-        return {"status": "error", "message": "Browser not started"}
+        return {"status": STATUS_ERROR, "message": "Browser not started"}
 
     settings = get_settings()
     is_dry_run = dry_run if dry_run is not None else settings.apply.dry_run
@@ -467,24 +491,24 @@ async def apply_step(
             filled_items.append(filled)
 
     if not auto_advance:
-        return {"status": "filled", "filled": filled_items, "errors": form_errors}
+        return {"status": STATUS_FILLED, "filled": filled_items, "errors": form_errors}
 
     # 3. Detect and handle step-advancement button
     action, btn = _detect_action_button(elements)
 
-    if action == "submit" and btn:
+    if action == ACTION_SUBMIT and btn:
         if is_dry_run:
-            return {"status": "ready_to_submit_dry_run_blocked", "filled": filled_items}
+            return {"status": STATUS_READY_TO_SUBMIT_DRY_RUN, "filled": filled_items}
         await browser.interact(btn["index"], "click")
         await human_delay()
-        return {"status": "submitted", "filled": filled_items}
+        return {"status": STATUS_SUBMITTED, "filled": filled_items}
 
-    if action in ("review", "next") and btn:
+    if action in (ACTION_REVIEW, ACTION_NEXT) and btn:
         await browser.interact(btn["index"], "click")
         await human_delay()
-        return {"status": "advanced", "filled": filled_items}
+        return {"status": STATUS_ADVANCED, "filled": filled_items}
 
-    return {"status": "no_advance_button", "filled": filled_items, "errors": form_errors}
+    return {"status": STATUS_NO_ADVANCE_BUTTON, "filled": filled_items, "errors": form_errors}
 
 
 def generate_recruiter_pitch(
@@ -492,7 +516,7 @@ def generate_recruiter_pitch(
     company: str,
     recruiter_name: str = "",
     top_skills: list[str] | None = None,
-    language: str = "auto",
+    language: str = AUTO_LANGUAGE,
 ) -> str:
     """Generate a concise, personalized LinkedIn recruiter connection note.
 
@@ -511,7 +535,7 @@ def generate_recruiter_pitch(
         A ready-to-send connection note string.
     """
     profile = load_profile()
-    name = profile.personal.first_name or "Candidate"
+    name = profile.personal.first_name or DEFAULT_CANDIDATE_NAME
 
     if top_skills:
         skills_list = top_skills[:MAX_PITCH_SKILLS]
@@ -525,8 +549,8 @@ def generate_recruiter_pitch(
     skills_str = ", ".join(filter(None, skills_list))
 
     posting_text = f"{job_title} {company}".lower()
-    is_es = language.lower() in ("es", "spanish", "español") or (
-        language == "auto"
+    is_es = language.lower() in SPANISH_LANGUAGES or (
+        language == AUTO_LANGUAGE
         and any(w in posting_text for w in SPANISH_DETECTION_WORDS)
     )
     first_name = recruiter_name.split()[0] if recruiter_name else ""
@@ -598,12 +622,12 @@ async def connect_recruiter(
                 await add_note.click()
                 await page.locator(NOTE_TEXTAREA_SELECTOR).fill(note)
                 await page.locator(SEND_BUTTON_SELECTORS).first.click()
-                return "connection_sent_with_note"
+                return RES_CONNECTION_SENT_WITH_NOTE
 
         send_btn = page.locator(SEND_BUTTON_SELECTORS).first
         if await send_btn.count() > 0:
             await send_btn.click()
-            return "connection_sent"
+            return RES_CONNECTION_SENT
 
         return "error: Send button not found"
     except Exception as e:

@@ -10,11 +10,21 @@ from jinja2 import Environment, FileSystemLoader
 from hawk.browser import browser
 from hawk.config import PROJECT_ROOT, RESUME_EXAMPLE_PATH, RESUME_PATH, _read_yaml, load_profile
 
-# ── Constants ────────────────────────────────────────────────────────────────
+# ── Constants & Configuration ────────────────────────────────────────────────
 
 TEMPLATES_DIR: Path = Path(__file__).resolve().parent / "templates"
 RESUMES_OUTPUT_DIR: Path = PROJECT_ROOT / "output" / "resumes"
 COVER_LETTERS_OUTPUT_DIR: Path = PROJECT_ROOT / "output" / "cover_letters"
+
+RESUME_TEMPLATE_NAME: str = "resume.html"
+COVER_LETTER_TEMPLATE_NAME: str = "cover_letter.html"
+
+RESUME_PDF_PATTERN: str = "resume_{job_id}.pdf"
+COVER_LETTER_PDF_PATTERN: str = "cover_letter_{job_id}.pdf"
+
+LANG_AUTO: str = "auto"
+LANG_ES: str = "es"
+LANG_EN: str = "en"
 
 # Maximum number of skills to surface when building a fallback cover letter body
 _TOP_SKILLS_COUNT: int = 4
@@ -103,7 +113,7 @@ def load_plain_text_resume(path: Path | None = None) -> dict[str, Any]:
     return _read_yaml(target)
 
 
-def detect_is_spanish(language: str = "auto", *text_samples: str) -> bool:
+def detect_is_spanish(language: str = LANG_AUTO, *text_samples: str) -> bool:
     """Detect whether target document language is Spanish.
 
     Args:
@@ -113,10 +123,10 @@ def detect_is_spanish(language: str = "auto", *text_samples: str) -> bool:
     Returns:
         True if document should be rendered in Spanish, False otherwise.
     """
-    lang_clean = language.strip().lower()
+    lang_clean = (language or LANG_AUTO).strip().lower()
     if lang_clean in SPANISH_LANG_CODES:
         return True
-    if lang_clean not in ("auto", ""):
+    if lang_clean not in (LANG_AUTO, ""):
         return False
     combined = " ".join(t for t in text_samples if t).lower()
     return any(kw in combined for kw in SPANISH_JOB_KEYWORDS)
@@ -137,22 +147,26 @@ def _extract_contact_info(
     """
     p = profile_data or {}
     r = resume_data or {}
-    personal = r.get("personal_information") or p.get("personal") or {}
+    personal_r = r.get("personal_information") or {}
+    personal_p = p.get("personal") or {}
+    personal = {**personal_p, **personal_r}
 
-    first_name = personal.get("first_name") or personal.get("name", "")
-    last_name = personal.get("last_name") or personal.get("surname", "")
+    first_name = personal.get("first_name") or personal.get("name") or ""
+    last_name = personal.get("last_name") or personal.get("surname") or ""
     full_name = f"{first_name} {last_name}".strip()
 
-    location = ", ".join(filter(None, [personal.get("city", ""), personal.get("country", "")]))
+    city = personal.get("city") or ""
+    country = personal.get("country") or ""
+    location = ", ".join(filter(None, [city, country]))
 
     links = p.get("links") or {}
     return {
         "full_name": full_name,
         "location": location,
-        "email": personal.get("email", "") or "",
-        "phone": personal.get("phone", "") or "",
-        "linkedin": personal.get("linkedin") or links.get("linkedin", "") or "",
-        "github": personal.get("github") or links.get("github", "") or "",
+        "email": str(personal.get("email") or ""),
+        "phone": str(personal.get("phone") or ""),
+        "linkedin": str(personal.get("linkedin") or links.get("linkedin") or ""),
+        "github": str(personal.get("github") or links.get("github") or ""),
     }
 
 
@@ -189,6 +203,59 @@ def _extract_skills(
     if isinstance(profile_skills, list):
         return _clean(profile_skills)
     return []
+
+
+def _extract_education(
+    profile_data: dict[str, Any] | None = None,
+    resume_data: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    """Extract normalized education entries from plain text resume or candidate profile.
+
+    Args:
+        profile_data: Raw profile dictionary.
+        resume_data: Raw plain text resume dictionary.
+
+    Returns:
+        List of normalized education dictionaries.
+    """
+    r = resume_data or {}
+    p = profile_data or {}
+
+    edu_details = r.get("education_details")
+    if isinstance(edu_details, list) and edu_details:
+        return edu_details
+
+    edu = p.get("education")
+    if isinstance(edu, dict) and any(edu.values()):
+        return [{
+            "education_level": edu.get("education_level") or edu.get("degree") or "",
+            "institution": edu.get("institution") or edu.get("school") or "",
+            "field_of_study": edu.get("field_of_study") or edu.get("field") or "",
+            "year_of_completion": edu.get("year_of_completion") or edu.get("graduation_year") or "",
+        }]
+    return []
+
+
+def _extract_experience(
+    custom_experience: list[dict[str, Any]] | None = None,
+    profile_data: dict[str, Any] | None = None,
+    resume_data: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    """Extract normalized experience entries from custom overrides, resume, or profile.
+
+    Args:
+        custom_experience: Optional customized experience entries.
+        profile_data: Raw profile dictionary.
+        resume_data: Raw plain text resume dictionary.
+
+    Returns:
+        List of experience dictionaries.
+    """
+    if custom_experience:
+        return custom_experience
+    r = resume_data or {}
+    p = profile_data or {}
+    return r.get("experience_details") or p.get("experience") or []
 
 
 def _select_cover_letter_body(
@@ -314,7 +381,7 @@ def render_ats_resume_html(
     tailored_summary: str = "",
     highlighted_skills: list[str] | dict[str, list[str]] | None = None,
     custom_experience: list[dict[str, Any]] | None = None,
-    language: str = "auto",
+    language: str = LANG_AUTO,
 ) -> str:
     """Render ATS-compliant resume HTML from profile data and tailored inputs.
 
@@ -336,16 +403,14 @@ def render_ats_resume_html(
 
     contact = _extract_contact_info(profile_data=p, resume_data=r)
     skills = _extract_skills(highlighted_skills=highlighted_skills, profile_skills=p.get("skills"))
-
-    exp = custom_experience or r.get("experience_details") or p.get("experience") or []
-    # education_details from resume takes precedence; fall back to single-entry profile education
-    edu = r.get("education_details") or ([p["education"]] if p.get("education") else [])
+    exp = _extract_experience(custom_experience=custom_experience, profile_data=p, resume_data=r)
+    edu = _extract_education(profile_data=p, resume_data=r)
 
     is_es = detect_is_spanish(language, job_title, tailored_headline)
-    lang_code = "es" if is_es else "en"
+    lang_code = LANG_ES if is_es else LANG_EN
     prof = p.get("professional", {})
 
-    template = _jinja_env.get_template("resume.html")
+    template = _jinja_env.get_template(RESUME_TEMPLATE_NAME)
     return template.render(
         language=lang_code,
         is_es=is_es,
@@ -369,7 +434,7 @@ def render_ats_cover_letter_html(
     company: str = "",
     hiring_manager: str = "",
     tailored_body_paragraphs: list[str] | str | None = None,
-    language: str = "auto",
+    language: str = LANG_AUTO,
 ) -> str:
     """Render ATS-compliant cover letter HTML.
 
@@ -387,7 +452,7 @@ def render_ats_cover_letter_html(
     p = profile_data or load_profile().model_dump()
     contact = _extract_contact_info(profile_data=p)
     is_es = detect_is_spanish(language, job_title, company)
-    lang_code = "es" if is_es else "en"
+    lang_code = LANG_ES if is_es else LANG_EN
 
     paragraphs = _build_cover_letter_paragraphs(
         tailored_body_paragraphs=tailored_body_paragraphs,
@@ -397,7 +462,7 @@ def render_ats_cover_letter_html(
         is_es=is_es,
     )
 
-    template = _jinja_env.get_template("cover_letter.html")
+    template = _jinja_env.get_template(COVER_LETTER_TEMPLATE_NAME)
     return template.render(
         language=lang_code,
         full_name=contact["full_name"],
@@ -430,6 +495,7 @@ async def _render_doc_pdf(html: str, out_path: Path) -> str:
     """
     return await browser.render_pdf(html, str(out_path))
 
+
 async def generate_tailored_pdf(
     job_id: str,
     job_title: str,
@@ -437,7 +503,7 @@ async def generate_tailored_pdf(
     tailored_summary: str = "",
     highlighted_skills: list[str] | None = None,
     custom_experience: list[dict[str, Any]] | None = None,
-    language: str = "auto",
+    language: str = LANG_AUTO,
     output_dir: Path | None = None,
 ) -> str:
     """Generate ATS PDF resume and save to output/resumes/resume_{job_id}.pdf.
@@ -455,7 +521,8 @@ async def generate_tailored_pdf(
     Returns:
         Absolute string path to rendered PDF file.
     """
-    out_path = (output_dir or RESUMES_OUTPUT_DIR) / f"resume_{job_id}.pdf"
+    filename = RESUME_PDF_PATTERN.format(job_id=job_id)
+    out_path = (output_dir or RESUMES_OUTPUT_DIR) / filename
     html = render_ats_resume_html(
         job_title=job_title,
         tailored_headline=tailored_headline,
@@ -473,7 +540,7 @@ async def generate_tailored_cover_letter(
     company: str,
     hiring_manager: str = "",
     tailored_body: list[str] | str | None = None,
-    language: str = "auto",
+    language: str = LANG_AUTO,
     output_dir: Path | None = None,
 ) -> str:
     """Generate ATS PDF cover letter and save to output/cover_letters/cover_letter_{job_id}.pdf.
@@ -490,7 +557,8 @@ async def generate_tailored_cover_letter(
     Returns:
         Absolute string path to rendered PDF file.
     """
-    out_path = (output_dir or COVER_LETTERS_OUTPUT_DIR) / f"cover_letter_{job_id}.pdf"
+    filename = COVER_LETTER_PDF_PATTERN.format(job_id=job_id)
+    out_path = (output_dir or COVER_LETTERS_OUTPUT_DIR) / filename
     html = render_ats_cover_letter_html(
         job_title=job_title,
         company=company,
