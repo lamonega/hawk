@@ -80,9 +80,7 @@ async def _pdf_via_headless(url: str, out: Path) -> str:
 
 
 async def html_to_pdf(html_content: str, output_path: str) -> str:
-    """Convert raw HTML content to PDF.
-
-    Loads the HTML as a base64 data URL, then prints to PDF.
+    """Convert raw HTML content to PDF without disrupting the active browser page.
 
     Args:
         html_content: Raw HTML string.
@@ -91,44 +89,41 @@ async def html_to_pdf(html_content: str, output_path: str) -> str:
     Returns:
         Path to the saved PDF file.
     """
-    page = get_page()
-    if page is None:
-        return "error: Browser not started"
-
     if not html_content or not html_content.strip():
         return "error: Empty HTML content"
 
-    try:
-        # Use base64 encoding instead of urllib.parse.quote (which breaks HTML tags)
-        encoded = base64.b64encode(html_content.encode("utf-8")).decode("ascii")
-        data_url = f"data:text/html;base64,{encoded}"
-        await page.goto(data_url, wait_until="networkidle", timeout=15000)
+    out = Path(output_path)
+    out.parent.mkdir(parents=True, exist_ok=True)
 
-        out = Path(output_path)
-        out.parent.mkdir(parents=True, exist_ok=True)
-
+    page = get_page()
+    if page is not None and not page.is_closed():
         try:
-            await page.pdf(
-                path=str(out),
-                format="A4",
-                margin={
-                    "top": "20mm",
-                    "bottom": "20mm",
-                    "left": "15mm",
-                    "right": "15mm",
-                },
-                print_background=True,
-            )
-        except Exception:
-            # Fallback to headless
-            return await _html_pdf_via_headless(html_content, out)
+            # Try isolated tab in existing context
+            temp_page = await page.context.new_page()
+            try:
+                encoded = base64.b64encode(html_content.encode("utf-8")).decode("ascii")
+                data_url = f"data:text/html;base64,{encoded}"
+                await temp_page.goto(data_url, wait_until="domcontentloaded", timeout=15000)
+                await temp_page.pdf(
+                    path=str(out),
+                    format="A4",
+                    margin={
+                        "top": "12mm",
+                        "bottom": "12mm",
+                        "left": "15mm",
+                        "right": "15mm",
+                    },
+                    print_background=True,
+                )
+                logger.info("HTML-to-PDF saved to {}", out)
+                return str(out)
+            finally:
+                await temp_page.close()
+        except Exception as e:
+            logger.warning("Isolated tab PDF failed (likely headed mode), using headless: {}", e)
 
-        logger.info("HTML-to-PDF saved to {}", out)
-        return str(out)
-
-    except Exception as e:
-        logger.error("HTML-to-PDF failed: {}", e)
-        return f"error: {e}"
+    # Headless fallback
+    return await _html_pdf_via_headless(html_content, out)
 
 
 async def _html_pdf_via_headless(html_content: str, out: Path) -> str:

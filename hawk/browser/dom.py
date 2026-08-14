@@ -428,14 +428,62 @@ async def upload_file(element_index: int, file_path: str) -> str:
         return "error: Browser not started"
 
     try:
-        loc = page.locator(f'[data-hawk-id="{element_index}"], input[type="file"]').first
-        if await loc.count() > 0:
-            await loc.set_input_files(file_path)
-            return f"Uploaded file: {file_path}"
-    except Exception as e:
-        return f"error uploading file: {e}"
+        # Check all frames and main document for file inputs
+        info = await page.evaluate(r"""
+        () => {
+            const inputs = Array.from(document.querySelectorAll('input[type="file"]'));
+            const res = inputs.map(i => ({
+                id: i.id,
+                name: i.name,
+                accept: i.accept,
+                parentTag: i.parentElement ? i.parentElement.tagName : '',
+                parentClass: i.parentElement ? i.parentElement.className : '',
+                visible: i.offsetParent !== null,
+                style: i.getAttribute('style') || ''
+            }));
+            const buttons = Array.from(document.querySelectorAll('button, label, div[role="button"]'))
+                .filter(b => (b.innerText || '').toLowerCase().includes('currículum') || (b.innerText || '').toLowerCase().includes('resume') || (b.innerText || '').toLowerCase().includes('cargar') || (b.innerText || '').toLowerCase().includes('upload'))
+                .map(b => ({
+                    tag: b.tagName,
+                    text: (b.innerText || '').trim(),
+                    for: b.getAttribute('for') || '',
+                    id: b.id,
+                    className: b.className
+                }));
+            return { fileInputs: res, uploadButtons: buttons };
+        }
+        """)
+        logger.info("Upload diagnostic info: {}", json.dumps(info, indent=2))
 
-    return f"error: Could not find file input for element {element_index}"
+        # Check if there is any file input on page
+        file_input = page.locator('input[type="file"]').first
+        if await file_input.count() > 0:
+            await file_input.set_input_files(file_path)
+            await page.wait_for_timeout(2500)
+            return f"Uploaded file: {file_path} (info: {json.dumps(info)})"
+
+        # Check if file input is inside an iframe
+        for frame in page.frames:
+            f_input = frame.locator('input[type="file"]').first
+            if await f_input.count() > 0:
+                await f_input.set_input_files(file_path)
+                await page.wait_for_timeout(2500)
+                return f"Uploaded file in frame {frame.name}: {file_path}"
+
+        # If still not found, check if clicking the upload button triggers or opens file chooser
+        upload_btn = page.locator('button:has-text("Cargar currículum"), button:has-text("Upload resume"), label:has-text("Cargar currículum"), label:has-text("Upload resume")').first
+        if await upload_btn.count() > 0:
+            async with page.expect_file_chooser(timeout=5000) as fc_info:
+                await upload_btn.click()
+            file_chooser = await fc_info.value
+            await file_chooser.set_files(file_path)
+            await page.wait_for_timeout(2500)
+            return f"Uploaded file via file chooser: {file_path}"
+
+    except Exception as e:
+        return f"error uploading file: {e} (info: {json.dumps(info) if 'info' in locals() else 'none'})"
+
+    return f"error: Could not find file input for element {element_index} (diagnostic: {json.dumps(info)})"
 
 
 async def take_screenshot() -> str:

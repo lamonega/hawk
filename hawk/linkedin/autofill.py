@@ -8,7 +8,7 @@ from loguru import logger
 from playwright.async_api import Page
 
 from hawk.browser.driver import get_page
-from hawk.linkedin.operations import _EASY_APPLY_ROOT_JS, human_delay
+from hawk.linkedin.operations import _EASY_APPLY_ROOT_JS, human_delay, upload_resume
 from hawk.profile import load_profile
 from hawk.settings import get_settings
 
@@ -455,8 +455,15 @@ async def auto_fill_current_step() -> dict[str, Any]:
         return {"error": str(e)}
 
 
-async def step_easy_apply_wizard(auto_advance: bool = True, override_dry_run: bool | None = None) -> dict[str, Any]:
+async def step_easy_apply_wizard(
+    auto_advance: bool = True,
+    override_dry_run: bool | None = None,
+    resume_path: str | None = None,
+) -> dict[str, Any]:
     """Auto-fills the current step and optionally clicks Next/Review/Submit.
+
+    If resume_path is provided and the current step contains a resume upload option,
+    the file is uploaded automatically before advancing.
 
     Returns the step execution summary and next page state.
     """
@@ -468,6 +475,26 @@ async def step_easy_apply_wizard(auto_advance: bool = True, override_dry_run: bo
     fill_result = await auto_fill_current_step()
     if "error" in fill_result:
         return fill_result
+
+    # 1.5. If resume_path provided, check if this is the resume step
+    if resume_path:
+        try:
+            has_upload = await page.locator(
+                'button:has-text("Cargar currículum"), button:has-text("Upload resume"), '
+                'label:has-text("Cargar currículum"), label:has-text("Upload resume"), '
+                'div[role="button"]:has-text("Cargar currículum"), div[role="button"]:has-text("Upload resume")'
+            ).count() > 0
+            if has_upload:
+                upload_res = await upload_resume(resume_path)
+                logger.info("Auto-upload resume during wizard: {}", upload_res)
+                if not upload_res.startswith("error"):
+                    fill_result.setdefault("filled", []).append({
+                        "field": "resume_upload",
+                        "value": resume_path,
+                        "status": upload_res,
+                    })
+        except Exception as e:
+            logger.warning("Resume upload check failed: {}", e)
 
     if not auto_advance:
         return fill_result
@@ -526,7 +553,11 @@ async def step_easy_apply_wizard(auto_advance: bool = True, override_dry_run: bo
     }
 
 
-async def auto_apply_full_flow(max_steps: int = 8, override_dry_run: bool | None = None) -> dict[str, Any]:
+async def auto_apply_full_flow(
+    max_steps: int = 8,
+    override_dry_run: bool | None = None,
+    resume_path: str | None = None,
+) -> dict[str, Any]:
     """Execute the entire Easy Apply wizard automatically until review/submit."""
     page = get_page()
     if page is None:
@@ -538,7 +569,11 @@ async def auto_apply_full_flow(max_steps: int = 8, override_dry_run: bool | None
     for step in range(max_steps):
         step_count += 1
         logger.info("Executing Easy Apply step {}/{}...", step_count, max_steps)
-        res = await step_easy_apply_wizard(auto_advance=True, override_dry_run=override_dry_run)
+        res = await step_easy_apply_wizard(
+            auto_advance=True,
+            override_dry_run=override_dry_run,
+            resume_path=resume_path,
+        )
 
         if "error" in res:
             return {"error": res["error"], "steps_completed": step_count, "filled": all_filled}

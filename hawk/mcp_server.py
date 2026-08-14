@@ -83,7 +83,11 @@ async def browser_navigate(url: str) -> str:
     Returns:
         The page title and URL after navigation.
     """
-    from hawk.browser.driver import get_page, dismiss_guest_overlays
+    from hawk.browser.driver import get_page
+    try:
+        from hawk.browser.driver import dismiss_guest_overlays
+    except ImportError:
+        dismiss_guest_overlays = None
 
     page = get_page()
     if page is None:
@@ -91,7 +95,8 @@ async def browser_navigate(url: str) -> str:
 
     try:
         await page.goto(url, wait_until="domcontentloaded", timeout=30000)
-        await dismiss_guest_overlays(page)
+        if dismiss_guest_overlays:
+            await dismiss_guest_overlays(page)
         return f"Navigated to: {page.url}\nTitle: {await page.title()}"
     except Exception as e:
         logger.error("browser_navigate failed: {}", e)
@@ -334,11 +339,15 @@ async def linkedin_click_easy_apply() -> str:
 
 
 @server.tool()
-async def linkedin_auto_fill_step() -> str:
+async def linkedin_auto_fill_step(resume_path: str | None = None) -> str:
     """Inspect and auto-fill the current Easy Apply form step using user profile data.
 
     Automatically completes phone, location, experience questions, yes/no radios,
     unfollows company checkbox, and clicks Next/Review.
+    If resume_path is specified and current step is resume upload, uploads the file.
+
+    Args:
+        resume_path: Optional path to a tailored PDF resume to upload.
 
     Returns:
         JSON with filled fields, status, and whether next step was reached.
@@ -347,20 +356,25 @@ async def linkedin_auto_fill_step() -> str:
     import hawk.linkedin.autofill
     importlib.reload(hawk.linkedin.autofill)
 
-    result = await hawk.linkedin.autofill.step_easy_apply_wizard(auto_advance=True)
+    result = await hawk.linkedin.autofill.step_easy_apply_wizard(auto_advance=True, resume_path=resume_path)
     return json.dumps(result, indent=2)
 
 
 @server.tool()
-async def linkedin_auto_apply(max_steps: int = 8, dry_run: bool | None = None) -> str:
+async def linkedin_auto_apply(
+    max_steps: int = 8,
+    dry_run: bool | None = None,
+    resume_path: str | None = None,
+) -> str:
     """Execute the entire Easy Apply wizard automatically until review/submit.
 
-    Auto-fills all screens (contact info, experience, legal, resume selection)
+    Auto-fills all screens (contact info, experience, legal, resume selection/upload)
     and stops before final submission if dry_run=true (or apply.dry_run=true in settings).
 
     Args:
         max_steps: Maximum wizard steps to attempt (default 8).
         dry_run: Optional override for dry_run mode (True = stop before submit, False = submit).
+        resume_path: Optional path to a tailored PDF resume to upload.
 
     Returns:
         JSON summary of the application flow and filled fields.
@@ -369,8 +383,30 @@ async def linkedin_auto_apply(max_steps: int = 8, dry_run: bool | None = None) -
     import hawk.linkedin.autofill
     importlib.reload(hawk.linkedin.autofill)
 
-    result = await hawk.linkedin.autofill.auto_apply_full_flow(max_steps=max_steps, override_dry_run=dry_run)
+    result = await hawk.linkedin.autofill.auto_apply_full_flow(
+        max_steps=max_steps,
+        override_dry_run=dry_run,
+        resume_path=resume_path,
+    )
     return json.dumps(result, indent=2)
+
+
+@server.tool()
+async def linkedin_upload_resume(resume_path: str) -> str:
+    """Upload a custom resume PDF in the current LinkedIn Easy Apply modal.
+
+    Args:
+        resume_path: Path to the PDF file to upload.
+
+    Returns:
+        Confirmation or error message.
+    """
+    import importlib
+    import hawk.linkedin.operations
+    importlib.reload(hawk.linkedin.operations)
+
+    return await hawk.linkedin.operations.upload_resume(resume_path)
+
 
 
 @server.tool()
@@ -513,6 +549,8 @@ def store_application(
     status: str = "applied",
     score: int = 0,
     dry_run: bool = True,
+    resume_path: str = "",
+    cover_letter_path: str = "",
 ) -> str:
     """Record an application in the database.
 
@@ -521,6 +559,8 @@ def store_application(
         status: Application status.
         score: Suitability score.
         dry_run: Whether this was a dry run.
+        resume_path: Path to the tailored resume PDF used.
+        cover_letter_path: Path to the tailored cover letter used.
 
     Returns:
         Confirmation message with daily count and remaining quota.
@@ -543,6 +583,8 @@ def store_application(
             status=status,
             score=score,
             dry_run=dry_run,
+            resume_path=resume_path,
+            cover_letter_path=cover_letter_path,
         )
         if not inserted:
             return f"Already recorded: {job_id} (duplicate application)"
@@ -550,7 +592,7 @@ def store_application(
         count = increment_daily_count()
         remaining = max(0, settings.apply.daily_max - count)
         return (
-            f"Application recorded: {job_id} (status={status}, dry_run={dry_run}). "
+            f"Application recorded: {job_id} (status={status}, dry_run={dry_run}, resume={resume_path}). "
             f"Today: {count}/{settings.apply.daily_max}, remaining: {remaining}"
         )
     except Exception as e:
@@ -874,6 +916,50 @@ def hawk_sync_resume() -> str:
         sync_profile_to_resume(profile)
         return "Resume synchronized successfully from profile.yaml to plain_text_resume.yaml"
     except Exception as e:
+        return f"error: {e}"
+
+
+@server.tool()
+async def hawk_generate_tailored_resume(
+    job_id: str,
+    job_title: str = "",
+    tailored_headline: str = "",
+    tailored_summary: str = "",
+    highlighted_skills: list[str] | dict[str, list[str]] | None = None,
+    custom_experience: list[dict[str, Any]] | None = None,
+) -> str:
+    """Generate an ATS-optimized tailored PDF resume for a specific job application.
+
+    Reads the user profile, combines it with job-specific tailoring (summary, headline, skills),
+    and exports a professional PDF to output/resumes/resume_{job_id}.pdf.
+
+    Args:
+        job_id: Unique job identifier or posting hash.
+        job_title: Target job title (e.g. 'Data Platform Engineer').
+        tailored_headline: Headline emphasizing skills matching the job.
+        tailored_summary: Professional summary tailored to job requirements.
+        highlighted_skills: List of keywords/skills or categorized skill dict.
+        custom_experience: Optional tailored list of experience entries with bullets.
+
+    Returns:
+        Absolute path to the generated PDF resume file.
+    """
+    import sys
+    sys.modules.pop("hawk.resume.generator", None)
+    from hawk.resume.generator import generate_tailored_pdf
+
+    try:
+        pdf_path = await generate_tailored_pdf(
+            job_id=job_id,
+            job_title=job_title,
+            tailored_headline=tailored_headline,
+            tailored_summary=tailored_summary,
+            highlighted_skills=highlighted_skills,
+            custom_experience=custom_experience,
+        )
+        return pdf_path
+    except Exception as e:
+        logger.error("Failed to generate tailored resume: {}", e)
         return f"error: {e}"
 
 

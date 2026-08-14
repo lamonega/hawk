@@ -72,22 +72,20 @@ Follow this pipeline when asked to apply to jobs:
 
 ### 4. Tailor (optional, if score >= 7)
 
-1. **You** generate a tailored resume: read `config/plain_text_resume.yaml` and the job
-   description, produce a tailored version. Save as `output/{hash}/resume_tailored.pdf`.
-2. **You** generate a tailored cover letter similarly.
-3. Use `browser_print_pdf(output_path)` to convert HTML to PDF if needed.
+1. **You** generate a tailored resume: call `hawk_generate_tailored_resume(job_id=..., job_title=..., tailored_headline=..., tailored_summary=..., highlighted_skills=...)`.
+   This compiles a clean ATS-optimized PDF saved to `output/resumes/resume_{job_id}.pdf`.
+2. Save the returned `resume_path` to use during application.
 
 ### 5. Apply (Easy Apply)
 
 1. Navigate to the job page.
 2. Call `linkedin_click_easy_apply()`.
-3. Loop:
-   - Call `linkedin_detect_fields()` to see what fields need filling.
-   - Fill fields: `browser_type(element_index, value)`, `browser_select(element_index, value)`, etc.
+3. Auto-fill with tailored resume:
+   - Call `linkedin_auto_apply(resume_path=resume_path)` OR loop with `linkedin_auto_fill_step(resume_path=resume_path)`.
+   - The wizard automatically completes all screens and uploads the tailored PDF on the resume step.
    - For unknown fields or CAPTCHAs: `ask_human("What should I enter for field X?")`.
-   - Call `linkedin_next_step()` until you reach Submit.
 4. Check `apply.dry_run` setting. If dry_run is true: **do not call `linkedin_submit()`**.
-5. Call `store_application(job_id, status="applied", score=..., dry_run=...)`.
+5. Call `store_application(job_id=..., status="applied", score=..., dry_run=..., resume_path=resume_path)`.
 
 ### 6. Rate limit
 
@@ -193,13 +191,16 @@ hawk/
 | `browser_print_pdf` | Convert page to PDF (auto headless fallback) |
 | `browser_close` | Close browser and save session |
 
-### LinkedIn (10)
+### LinkedIn (11)
 | Tool | Description |
 |------|-------------|
 | `linkedin_search` | Navigate to LinkedIn job search |
 | `linkedin_extract_jobs_list` | Extract job cards from search results |
 | `linkedin_extract_job` | Extract details from a job page |
 | `linkedin_click_easy_apply` | Click Easy Apply button (detects already-applied) |
+| `linkedin_auto_fill_step` | Auto-fill current wizard step (with optional resume upload & auto-advance) |
+| `linkedin_auto_apply` | Execute entire Easy Apply flow automatically (supports tailored resume upload) |
+| `linkedin_upload_resume` | Upload custom resume PDF into Easy Apply modal |
 | `linkedin_detect_fields` | Detect form fields + progress % in Easy Apply modal |
 | `linkedin_next_step` | Click Next/Continue/Submit in wizard |
 | `linkedin_submit` | Submit application (unfollows company, verifies modal closed) |
@@ -211,13 +212,14 @@ hawk/
 | Tool | Description |
 |------|-------------|
 | `store_job` | Save job to database |
-| `store_application` | Record application (enforces daily cap, deduplicates) |
+| `store_application` | Record application (enforces daily cap, deduplicates, saves resume path) |
 | `get_daily_count` | Get today's application count |
 | `get_application_history` | Check if already applied |
 
-### Utility (12)
+### Utility (13)
 | Tool | Description |
 |------|-------------|
+| `hawk_generate_tailored_resume` | Generate ATS-optimized custom PDF resume matching job keywords |
 | `hawk_read_resume` | Read resume YAML template |
 | `hawk_sync_resume` | Synchronize profile data into plain text resume template |
 | `hawk_read_profile` | Read user profile |
@@ -230,4 +232,5 @@ hawk/
 | `hawk_read_settings` | Read current settings (auto-reloads on file change) |
 | `hawk_update_settings` | Update settings.yaml fields (positions, limits, filters) |
 | `ask_human` | Signal need for human input |
+
 

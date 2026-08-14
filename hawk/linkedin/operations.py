@@ -13,7 +13,31 @@ from typing import Any
 
 from loguru import logger
 
-from hawk.browser.driver import get_page, save_session, dismiss_guest_overlays
+from hawk.browser.driver import get_page, save_session
+try:
+    from hawk.browser.driver import dismiss_guest_overlays
+except ImportError:
+    async def dismiss_guest_overlays(page: Any = None) -> bool:
+        p = page or get_page()
+        if p is None:
+            return False
+        for sel in [
+            'button[aria-label="Descartar"]', 'button[aria-label="Dismiss"]',
+            'button[aria-label="Cerrar"]', 'button[aria-label="Close"]',
+            '.contextual-sign-in-modal__modal-dismiss-btn', '.modal__dismiss-btn',
+            'button.artdeco-modal__dismiss', '[data-test-modal-close-btn]',
+            'button[data-tracking-control-name="public_jobs_contextual-sign-in-modal_sign-in-modal_dismiss"]',
+        ]:
+            try:
+                loc = p.locator(sel).first
+                if await loc.is_visible(timeout=500):
+                    is_apply = await loc.evaluate("el => !!el.closest('.jobs-easy-apply-modal, [data-test-modal-id=\"easy-apply-modal\"], [data-testid=\"easy-apply-modal\"]')")
+                    if not is_apply:
+                        await loc.click(force=True)
+                        await asyncio.sleep(0.5)
+            except Exception:
+                pass
+        return False
 from hawk.settings import get_settings
 
 SCREENSHOT_DIR = Path("output/screenshots")
@@ -1357,3 +1381,46 @@ async def search_and_navigate(
 def generate_job_id(link: str) -> str:
     """Generate a short job ID from a LinkedIn job URL."""
     return hashlib.md5(link.encode()).hexdigest()[:10]
+
+
+async def upload_resume(file_path: str) -> str:
+    """Upload a resume file to the current LinkedIn Easy Apply modal."""
+    page = get_page()
+    if page is None:
+        return "error: Browser not started"
+
+    path_obj = Path(file_path)
+    if not path_obj.exists():
+        return f"error: File not found: {file_path}"
+
+    abs_path = str(path_obj.resolve())
+
+    try:
+        # 1. Direct input[type="file"]
+        file_input = page.locator('.jobs-easy-apply-modal input[type="file"], [role="dialog"] input[type="file"], input[type="file"]').first
+        if await file_input.count() > 0:
+            await file_input.set_input_files(abs_path)
+            await page.wait_for_timeout(2500)
+            logger.info("Resume uploaded via direct file input: {}", abs_path)
+            return f"uploaded: {abs_path}"
+
+        # 2. Intercept native file chooser via upload button
+        upload_btn = page.locator(
+            'button:has-text("Cargar currículum"), button:has-text("Upload resume"), '
+            'label:has-text("Cargar currículum"), label:has-text("Upload resume"), '
+            'div[role="button"]:has-text("Cargar currículum"), div[role="button"]:has-text("Upload resume")'
+        ).first
+
+        if await upload_btn.count() > 0:
+            async with page.expect_file_chooser(timeout=7000) as fc_info:
+                await upload_btn.click()
+            file_chooser = await fc_info.value
+            await file_chooser.set_files(abs_path)
+            await page.wait_for_timeout(3000)
+            logger.info("Resume uploaded via file chooser: {}", abs_path)
+            return f"uploaded: {abs_path}"
+
+        return "error: Could not find resume upload button or file input on current step"
+    except Exception as e:
+        logger.error("upload_resume failed: {}", e)
+        return f"error: {e}"
