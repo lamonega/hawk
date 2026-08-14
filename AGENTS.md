@@ -18,7 +18,7 @@ hawk/
 │   ├── settings.example.yaml         # Settings template
 │   └── plain_text_resume.example.yaml# Plain text resume template
 ├── hawk/
-│   ├── __init__.py                   # Package version (v0.14.0)
+│   ├── __init__.py                   # Package version (v0.14.1)
 │   ├── config.py                     # Centralized Pydantic models, settings & profile
 │   ├── browser.py                    # Playwright engine, stealth patches & DOM snapshot
 │   ├── linkedin.py                   # LinkedIn search, job extractor & Easy Apply engine

@@ -47,6 +47,9 @@ EASY_APPLY_BUTTON_SELECTORS: list[str] = [
     "button.jobs-apply-button",
     "button[aria-label*='Easy Apply']",
     "button[aria-label*='Solicitud sencilla']",
+    "button[aria-label*='Aplicar']",
+    "button[data-testid*='apply-button']",
+    "button[data-test-easy-apply-btn]",
 ]
 
 CONNECT_BUTTON_SELECTORS: str = 'button:has-text("Conectar"), button:has-text("Connect")'

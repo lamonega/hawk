@@ -35,6 +35,7 @@ from hawk.storage import (
     increment_daily_count,
     init_db,
     insert_application,
+    insert_job,
 )
 
 mcp = FastMCP("hawk")
@@ -329,9 +330,31 @@ async def linkedin_extract(mode: str = "auto") -> str:
         url = page.url
         if extract_mode == "jobs_list" or (extract_mode == "auto" and "jobs/search" in url):
             jobs = await extract_jobs_list()
+            for j in jobs:
+                jid = str(j.get("job_id", "")).strip()
+                if jid:
+                    insert_job(
+                        job_id=jid,
+                        role=j.get("role", ""),
+                        company=j.get("company", ""),
+                        link=j.get("link", ""),
+                        location=j.get("location", ""),
+                    )
             return _to_json(jobs)
         else:
             details = await extract_job_details()
+            import re
+            m = re.search(r"/jobs/view/(\d+)", url)
+            if m:
+                insert_job(
+                    job_id=m.group(1),
+                    role=details.get("role", ""),
+                    company=details.get("company", ""),
+                    link=url,
+                    location=details.get("location", ""),
+                    description=details.get("description", ""),
+                    recruiter_link=details.get("recruiter_link", ""),
+                )
             return _to_json(details)
     except Exception as exc:
         logger.error("linkedin_extract failed: {}", exc)
@@ -671,6 +694,13 @@ async def hawk_stats(
                 return _error_json("job_id is required for 'save_app'")
             clean_job_id = job_id.strip()
             clean_status = status.strip()
+            if get_job(clean_job_id) is None:
+                insert_job(
+                    job_id=clean_job_id,
+                    role="",
+                    company="",
+                    link=f"https://www.linkedin.com/jobs/view/{clean_job_id}/",
+                )
             ok = insert_application(
                 job_id=clean_job_id,
                 status=clean_status,

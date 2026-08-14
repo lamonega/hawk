@@ -73,7 +73,8 @@ OVERLAY_DISMISS_SELECTORS: list[str] = [
 ]
 
 EASY_APPLY_MODAL_SELECTOR: str = (
-    '.jobs-easy-apply-modal, [data-test-modal-id="easy-apply-modal"]'
+    'dialog[open], dialog[data-testid="dialog"], [data-testid="dialog"], '
+    '.jobs-easy-apply-modal, [data-test-modal-id="easy-apply-modal"], [role="dialog"], .artdeco-modal'
 )
 
 # --- JavaScript Injections ---
@@ -120,7 +121,7 @@ _DOM_SNAPSHOT_JS: str = r"""
         '[role="tab"]'
     ];
 
-    const MODAL_CONTAINER_SELECTOR = '[role="dialog"], .jobs-easy-apply-modal, div[data-test-modal-id="easy-apply-modal"], .artdeco-modal';
+    const MODAL_CONTAINER_SELECTOR = 'dialog[open], dialog[data-testid="dialog"], [data-testid="dialog"], [role="dialog"], .jobs-easy-apply-modal, div[data-test-modal-id="easy-apply-modal"], .artdeco-modal';
     const ERROR_SELECTORS = [
         '.artdeco-inline-feedback--error',
         '.fb-dash-form-element__error-text',
