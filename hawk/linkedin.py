@@ -94,6 +94,109 @@ _MARKER_TYPED: str = "typed"
 # ── 6. Unchecked Checkbox Indicators ─────────────────────────────────────────
 _CHECKBOX_UNCHECKED_VALUES: frozenset[str] = frozenset({"false", "0", ""})
 
+# ── 7. JavaScript DOM Extraction Scripts ──────────────────────────────────────
+_EXTRACT_JOBS_LIST_JS: str = r"""
+() => {
+    const results = [];
+    const seen = new Set();
+
+    // Strategy 1: Standard job card selectors
+    const cards = document.querySelectorAll(
+        '.job-card-container, .jobs-search-results__list-item, [data-job-id], [data-occludable-job-id]'
+    );
+    for (const card of cards) {
+        const id = card.getAttribute('data-job-id') ||
+                   card.getAttribute('data-occludable-job-id') ||
+                   card.getAttribute('data-entity-urn')?.split(':').pop() || '';
+        if (!id || seen.has(id)) continue;
+        seen.add(id);
+
+        const titleEl = card.querySelector('.job-card-list__title, .job-card-container__link, a[href*="/jobs/view/"]');
+        const companyEl = card.querySelector('.job-card-container__company-name, .artdeco-entity-lockup__subtitle');
+        const locEl = card.querySelector('.job-card-container__metadata-item, .job-card-container__metadata-wrapper span');
+        const easyBadge = card.querySelector('.job-card-container__easy-apply-label, [data-easy-apply-badge]');
+        const appliedEl = card.querySelector('[aria-label*="Applied"], .artdeco-inline-feedback, [aria-label*="Solicitado"]');
+        const linkEl = card.querySelector('a[href*="/jobs/view/"]');
+        const text = card.innerText || '';
+
+        results.push({
+            job_id: id,
+            role: titleEl?.innerText?.trim() || '',
+            company: companyEl?.innerText?.trim() || '',
+            location: locEl?.innerText?.trim() || '',
+            easy_apply: !!easyBadge || text.includes('Solicitud sencilla') || text.includes('Easy Apply'),
+            already_applied: !!appliedEl && (appliedEl.innerText || '').match(/solicitado|applied/i) !== null,
+            link: linkEl ? linkEl.href : `https://www.linkedin.com/jobs/view/${id}/`,
+        });
+    }
+
+    // Strategy 2: SDUI 2026 component cards
+    const col = document.querySelector('[data-testid="lazy-column"], #lazy-column');
+    if (col && results.length === 0) {
+        for (const item of col.querySelectorAll('[componentkey*="job-card-component-ref-"]')) {
+            const key = item.getAttribute('componentkey') || '';
+            const id = key.replace('job-card-component-ref-', '').trim();
+            if (!id || seen.has(id)) continue;
+            seen.add(id);
+
+            const titleEl = item.querySelector('p, span[aria-hidden="true"]');
+            const text = item.innerText || '';
+            const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+
+            results.push({
+                job_id: id,
+                role: titleEl?.innerText?.trim() || (lines[0] || ''),
+                company: lines[1] || '',
+                location: lines[2] || '',
+                easy_apply: text.includes('Solicitud sencilla') || text.includes('Easy Apply'),
+                already_applied: text.includes('Candidatura enviada') || text.includes('Applied') || text.includes('Solicitado'),
+                link: `https://www.linkedin.com/jobs/view/${id}/`,
+            });
+        }
+    }
+    return results;
+}
+"""
+
+_EXTRACT_JOB_DETAILS_JS: str = r"""
+() => {
+    const titleEl = document.querySelector(
+        '.job-details-jobs-unified-top-card__job-title, h1.topcard__title, h1'
+    );
+    const companyEl = document.querySelector(
+        '.job-details-jobs-unified-top-card__company-name, .topcard__org-name-link, a[href*="/company/"]'
+    );
+    const locEl = document.querySelector(
+        '.job-details-jobs-unified-top-card__primary-description-container, .topcard__flavor--bullet'
+    );
+    const descEl = document.querySelector(
+        '.jobs-description__content, .description__text, #job-details, [data-testid="lazy-column"]'
+    );
+    const recruiterEl = document.querySelector(
+        '.hirer-card__hirer-information a, .message-the-recruiter a, [data-tracking-control-name="public_jobs_hirer-card"]'
+    );
+    const applyBtn = document.querySelector(
+        '.jobs-apply-button, button[aria-label*="Easy Apply"], button[aria-label*="Solicitud sencilla"]'
+    );
+
+    const fullText = document.body.innerText || '';
+    const applied = fullText.includes('Applied') ||
+                    fullText.includes('Solicitado hace') ||
+                    fullText.includes('Candidatura enviada');
+
+    return {
+        role: titleEl?.innerText?.trim() || document.title,
+        company: companyEl?.innerText?.trim() || '',
+        location: locEl?.innerText?.trim() || '',
+        description: descEl?.innerText?.trim().slice(0, 5000) || '',
+        recruiter: recruiterEl?.innerText?.trim() || '',
+        recruiter_link: recruiterEl ? recruiterEl.href : '',
+        easy_apply: !!applyBtn,
+        already_applied: applied,
+    };
+}
+"""
+
 
 # ── Helper Functions ──────────────────────────────────────────────────────────
 
@@ -258,69 +361,7 @@ async def extract_jobs_list() -> list[dict[str, Any]]:
         return []
 
     try:
-        jobs: list[dict[str, Any]] = await page.evaluate(r"""
-        () => {
-            const results = [];
-            const seen = new Set();
-
-            // Strategy 1: Standard job card selectors
-            const cards = document.querySelectorAll(
-                '.job-card-container, .jobs-search-results__list-item, [data-job-id], [data-occludable-job-id]'
-            );
-            for (const card of cards) {
-                const id = card.getAttribute('data-job-id') ||
-                           card.getAttribute('data-occludable-job-id') ||
-                           card.getAttribute('data-entity-urn')?.split(':').pop() || '';
-                if (!id || seen.has(id)) continue;
-                seen.add(id);
-
-                const titleEl = card.querySelector('.job-card-list__title, .job-card-container__link, a[href*="/jobs/view/"]');
-                const companyEl = card.querySelector('.job-card-container__company-name, .artdeco-entity-lockup__subtitle');
-                const locEl = card.querySelector('.job-card-container__metadata-item, .job-card-container__metadata-wrapper span');
-                const easyBadge = card.querySelector('.job-card-container__easy-apply-label, [data-easy-apply-badge]');
-                const appliedEl = card.querySelector('[aria-label*="Applied"], .artdeco-inline-feedback, [aria-label*="Solicitado"]');
-                const linkEl = card.querySelector('a[href*="/jobs/view/"]');
-                const text = card.innerText || '';
-
-                results.push({
-                    job_id: id,
-                    role: titleEl?.innerText?.trim() || '',
-                    company: companyEl?.innerText?.trim() || '',
-                    location: locEl?.innerText?.trim() || '',
-                    easy_apply: !!easyBadge || text.includes('Solicitud sencilla') || text.includes('Easy Apply'),
-                    already_applied: !!appliedEl && (appliedEl.innerText || '').match(/solicitado|applied/i) !== null,
-                    link: linkEl ? linkEl.href : `https://www.linkedin.com/jobs/view/${id}/`,
-                });
-            }
-
-            // Strategy 2: SDUI 2026 component cards
-            const col = document.querySelector('[data-testid="lazy-column"], #lazy-column');
-            if (col && results.length === 0) {
-                for (const item of col.querySelectorAll('[componentkey*="job-card-component-ref-"]')) {
-                    const key = item.getAttribute('componentkey') || '';
-                    const id = key.replace('job-card-component-ref-', '').trim();
-                    if (!id || seen.has(id)) continue;
-                    seen.add(id);
-
-                    const titleEl = item.querySelector('p, span[aria-hidden="true"]');
-                    const text = item.innerText || '';
-                    const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
-
-                    results.push({
-                        job_id: id,
-                        role: titleEl?.innerText?.trim() || (lines[0] || ''),
-                        company: lines[1] || '',
-                        location: lines[2] || '',
-                        easy_apply: text.includes('Solicitud sencilla') || text.includes('Easy Apply'),
-                        already_applied: text.includes('Candidatura enviada') || text.includes('Applied') || text.includes('Solicitado'),
-                        link: `https://www.linkedin.com/jobs/view/${id}/`,
-                    });
-                }
-            }
-            return results;
-        }
-        """)
-
+        jobs: list[dict[str, Any]] = await page.evaluate(_EXTRACT_JOBS_LIST_JS)
         settings = get_settings()
         return [j for j in jobs if _is_job_allowed(j, settings)]
     except Exception as e:
@@ -335,44 +376,7 @@ async def extract_job_details() -> dict[str, Any]:
         return {}
 
     try:
-        details: dict[str, Any] = await page.evaluate(r"""
-        () => {
-            const titleEl = document.querySelector(
-                '.job-details-jobs-unified-top-card__job-title, h1.topcard__title, h1'
-            );
-            const companyEl = document.querySelector(
-                '.job-details-jobs-unified-top-card__company-name, .topcard__org-name-link, a[href*="/company/"]'
-            );
-            const locEl = document.querySelector(
-                '.job-details-jobs-unified-top-card__primary-description-container, .topcard__flavor--bullet'
-            );
-            const descEl = document.querySelector(
-                '.jobs-description__content, .description__text, #job-details, [data-testid="lazy-column"]'
-            );
-            const recruiterEl = document.querySelector(
-                '.hirer-card__hirer-information a, .message-the-recruiter a, [data-tracking-control-name="public_jobs_hirer-card"]'
-            );
-            const applyBtn = document.querySelector(
-                '.jobs-apply-button, button[aria-label*="Easy Apply"], button[aria-label*="Solicitud sencilla"]'
-            );
-
-            const fullText = document.body.innerText || '';
-            const applied = fullText.includes('Applied') ||
-                            fullText.includes('Solicitado hace') ||
-                            fullText.includes('Candidatura enviada');
-
-            return {
-                role: titleEl?.innerText?.trim() || document.title,
-                company: companyEl?.innerText?.trim() || '',
-                location: locEl?.innerText?.trim() || '',
-                description: descEl?.innerText?.trim().slice(0, 5000) || '',
-                recruiter: recruiterEl?.innerText?.trim() || '',
-                recruiter_link: recruiterEl ? recruiterEl.href : '',
-                easy_apply: !!applyBtn,
-                already_applied: applied,
-            };
-        }
-        """)
+        details: dict[str, Any] = await page.evaluate(_EXTRACT_JOB_DETAILS_JS)
         return details
     except Exception as e:
         logger.warning("extract_job_details failed: {}", e)

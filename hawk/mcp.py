@@ -9,7 +9,7 @@ from typing import Any
 from loguru import logger
 from mcp.server.fastmcp import FastMCP
 
-from hawk.browser import browser
+from hawk.browser import EASY_APPLY_MODAL_SELECTOR, browser
 from hawk.config import (
     UserProfile,
     get_settings,
@@ -309,12 +309,10 @@ async def linkedin_apply_step(
     """
     try:
         page = browser.get_page()
-        if page:
-            has_modal = await page.evaluate("() => !document.querySelector('[role=\"dialog\"], .jobs-easy-apply-modal')")
-            if not has_modal:
-                click_res = await click_easy_apply()
-                if click_res != "clicked_easy_apply":
-                    return _to_json({"status": click_res, "detail": "Could not open Easy Apply modal"})
+        if page and await page.locator(EASY_APPLY_MODAL_SELECTOR).count() == 0:
+            click_res = await click_easy_apply()
+            if click_res != "clicked_easy_apply":
+                return _to_json({"status": click_res, "detail": "Could not open Easy Apply modal"})
 
         res = await apply_step(
             resume_path=resume_path.strip() or None,
