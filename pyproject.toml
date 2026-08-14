@@ -1,6 +1,6 @@
 [project]
 name = "hawk"
-version = "0.13.1"
+version = "0.13.2"
 description = "AI-powered LinkedIn Easy Apply job applier using MCP"
 readme = "README.md"
 requires-python = ">=3.12"

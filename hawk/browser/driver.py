@@ -335,18 +335,25 @@ async def wait_for_login(timeout: int = 120, poll_interval: float = 2.0) -> str:
             cookies = await page.context.cookies(["https://www.linkedin.com"])
             has_li_at = any(c.get("name") == "li_at" and bool(c.get("value")) for c in cookies)
 
-            # 2. Check current page elements / URL
-            current_url = page.url
-            is_feed = "/feed" in current_url or "/jobs" in current_url
-
+            # Check for authentic logged-in UI elements
             nav_el = None
             try:
-                nav_el = await page.query_selector("#global-nav, .global-nav__me, .feed-identity-module, .nav-item--profile")
+                nav_el = await page.query_selector(
+                    "#global-nav .global-nav__me, .feed-identity-module, "
+                    "button.global-nav__primary-link-me-menu-trigger, "
+                    "[data-control-name=\"nav.settings\"], .profile-rail-card"
+                )
             except Exception:
                 pass
 
-            if has_li_at or nav_el or (is_feed and "login" not in current_url and "authwall" not in current_url):
-                logger.info("LinkedIn login detected! Saving session state...")
+            guest_signin = None
+            try:
+                guest_signin = await page.query_selector("a[href*='login'], .nav__button-secondary, [data-tracking-control-name='guest_homepage-basic_nav-header-signin']")
+            except Exception:
+                pass
+
+            if (has_li_at and nav_el) or (nav_el and not guest_signin):
+                logger.info("LinkedIn login confirmed! Saving session state...")
                 await asyncio.sleep(1.0)
                 await save_session()
                 await dismiss_guest_overlays(page)
@@ -378,23 +385,24 @@ async def check_linkedin_session() -> str:
         await dismiss_guest_overlays(page)
         url = page.url
 
-        if "login" in url or "authwall" in url:
+        if "login" in url or "authwall" in url or "checkpoint" in url or "challenge" in url:
             return "not_logged_in"
 
-        # LinkedIn sometimes shows a checkpoint/challenge page
-        if "checkpoint" in url or "challenge" in url:
-            logger.warning("LinkedIn checkpoint/challenge detected at: {}", url)
-            return "not_logged_in"
+        # Verify authentic logged-in elements
+        feed = await page.query_selector(
+            ".feed-identity-module, #global-nav .global-nav__me, "
+            "button.global-nav__primary-link-me-menu-trigger, "
+            "[data-control-name=\"nav.settings\"], .profile-rail-card"
+        )
+        guest_signin = await page.query_selector("a[href*='login'], .nav__button-secondary, [data-tracking-control-name='guest_homepage-basic_nav-header-signin']")
 
-        feed = await page.query_selector(".feed-identity-module, #global-nav, .global-nav__me")
-        if feed or has_li_at or "/feed" in url:
+        if feed and not guest_signin:
             await save_session()
             return "logged_in"
 
         return "not_logged_in"
     except Exception as e:
         logger.error("Session check failed: {}", e)
-        # Navigation interrupted often means a redirect to checkpoint
         if "checkpoint" in str(e) or "challenge" in str(e):
             return "not_logged_in"
         return f"error: {e}"

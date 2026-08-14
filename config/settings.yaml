@@ -27,7 +27,7 @@ linkedin:
 scoring:
   min_score: 7
 apply:
-  daily_max: 5
+  daily_max: 10
   min_delay: 2.0
   max_delay: 6.0
   dry_run: true
