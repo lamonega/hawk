@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# hawk runtime
+profiles/
+output/
+*.db
+*.db-wal
+*.db-shm
+log/
+
+# Personal config
+config/settings.yaml
+config/profile.yaml
+config/plain_text_resume.yaml
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# uv
+uv.lock
+
+# MCP / opencode
+opencode.json
