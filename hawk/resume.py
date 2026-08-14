@@ -8,17 +8,236 @@ from typing import Any
 from jinja2 import Environment, FileSystemLoader
 
 from hawk.browser import browser
-from hawk.config import PROJECT_ROOT, UserProfile, load_profile, _read_yaml, RESUME_PATH, RESUME_EXAMPLE_PATH
+from hawk.config import PROJECT_ROOT, RESUME_EXAMPLE_PATH, RESUME_PATH, _read_yaml, load_profile
 
-TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
-_jinja_env = Environment(loader=FileSystemLoader(str(TEMPLATES_DIR)), autoescape=True)
+# ── Constants ────────────────────────────────────────────────────────────────
 
+TEMPLATES_DIR: Path = Path(__file__).resolve().parent / "templates"
+RESUMES_OUTPUT_DIR: Path = PROJECT_ROOT / "output" / "resumes"
+COVER_LETTERS_OUTPUT_DIR: Path = PROJECT_ROOT / "output" / "cover_letters"
+
+DEFAULT_PDF_MARGINS: dict[str, str] = {
+    "top": "12mm",
+    "bottom": "12mm",
+    "left": "15mm",
+    "right": "15mm",
+}
+
+SPANISH_LANG_CODES: frozenset[str] = frozenset({
+    "es",
+    "spa",
+    "spanish",
+    "español",
+    "es-es",
+    "es-la",
+    "es-ar",
+    "es-mx",
+})
+
+SPANISH_JOB_KEYWORDS: tuple[str, ...] = (
+    "ingeniero",
+    "desarrollador",
+    "remoto",
+    "sistemas",
+    "empresa",
+    "analista",
+    "programador",
+    "arquitecto",
+    "licenciado",
+    "administrador",
+    "tecnico",
+    "técnico",
+    "consultor",
+)
+
+_jinja_env: Environment = Environment(
+    loader=FileSystemLoader(str(TEMPLATES_DIR)),
+    autoescape=True,
+)
+
+
+# ── Helpers ──────────────────────────────────────────────────────────────────
 
 def load_plain_text_resume(path: Path | None = None) -> dict[str, Any]:
-    """Load plain_text_resume.yaml or plain_text_resume.example.yaml."""
+    """Load plain_text_resume.yaml or plain_text_resume.example.yaml fallback.
+
+    Args:
+        path: Optional explicit path to resume YAML.
+
+    Returns:
+        Dictionary with parsed resume data.
+    """
     target = path or (RESUME_PATH if RESUME_PATH.exists() else RESUME_EXAMPLE_PATH)
     return _read_yaml(target)
 
+
+def detect_is_spanish(language: str = "auto", *text_samples: str) -> bool:
+    """Detect whether target document language is Spanish.
+
+    Args:
+        language: Language code or 'auto'.
+        *text_samples: Contextual text strings (job title, headline, company) to scan for keywords.
+
+    Returns:
+        True if document should be rendered in Spanish, False otherwise.
+    """
+    lang_clean = language.strip().lower()
+    if lang_clean in SPANISH_LANG_CODES:
+        return True
+    if lang_clean not in ("auto", ""):
+        return False
+    combined = " ".join(t for t in text_samples if t).lower()
+    return any(kw in combined for kw in SPANISH_JOB_KEYWORDS)
+
+
+def _extract_contact_info(
+    profile_data: dict[str, Any] | None = None,
+    resume_data: dict[str, Any] | None = None,
+) -> dict[str, str]:
+    """Extract unified candidate contact details from profile and resume dicts.
+
+    Args:
+        profile_data: Raw profile dictionary.
+        resume_data: Raw plain text resume dictionary.
+
+    Returns:
+        Normalized dictionary with full_name, location, email, phone, linkedin, and github.
+    """
+    p = profile_data or {}
+    r = resume_data or {}
+    personal = r.get("personal_information") or p.get("personal") or {}
+
+    first_name = personal.get("first_name") or personal.get("name", "")
+    last_name = personal.get("last_name") or personal.get("surname", "")
+    full_name = f"{first_name} {last_name}".strip()
+
+    loc_parts = [personal.get("city", ""), personal.get("country", "")]
+    location = ", ".join(filter(None, loc_parts))
+
+    links = p.get("links") or {}
+    linkedin = str(personal.get("linkedin") or links.get("linkedin", "") or "")
+    github = str(personal.get("github") or links.get("github", "") or "")
+    email = str(personal.get("email", "") or "")
+    phone = str(personal.get("phone", "") or "")
+
+    return {
+        "full_name": full_name,
+        "location": location,
+        "email": email,
+        "phone": phone,
+        "linkedin": linkedin,
+        "github": github,
+    }
+
+
+def _extract_skills(
+    highlighted_skills: list[str] | dict[str, list[str]] | None = None,
+    profile_skills: dict[str, Any] | list[str] | None = None,
+) -> list[str]:
+    """Extract normalized skills list from highlights or factual profile skills.
+
+    Args:
+        highlighted_skills: Explicit skill list or categorized dictionary.
+        profile_skills: Skills from candidate profile dictionary or list.
+
+    Returns:
+        List of formatted skill strings.
+    """
+    if highlighted_skills:
+        if isinstance(highlighted_skills, list):
+            return [str(s).strip() for s in highlighted_skills if str(s).strip()]
+        if isinstance(highlighted_skills, dict):
+            flattened: list[str] = []
+            for group in highlighted_skills.values():
+                if isinstance(group, list):
+                    flattened.extend(str(s).strip() for s in group if str(s).strip())
+                elif isinstance(group, str) and group.strip():
+                    flattened.append(group.strip())
+            return flattened
+
+    if isinstance(profile_skills, dict):
+        return [str(k).strip().capitalize() for k in profile_skills if str(k).strip()]
+    if isinstance(profile_skills, list):
+        return [str(s).strip() for s in profile_skills if str(s).strip()]
+    return []
+
+
+def _build_cover_letter_paragraphs(
+    tailored_body_paragraphs: list[str] | str | None,
+    profile_data: dict[str, Any],
+    job_title: str,
+    company: str,
+    is_es: bool,
+) -> list[str]:
+    """Construct cover letter paragraphs grounded strictly in candidate profile facts.
+
+    Args:
+        tailored_body_paragraphs: Agent-provided paragraphs (list or string).
+        profile_data: Candidate profile dictionary.
+        job_title: Target job title.
+        company: Target hiring company.
+        is_es: Whether the letter is in Spanish.
+
+    Returns:
+        List of body paragraph strings.
+    """
+    if isinstance(tailored_body_paragraphs, str) and tailored_body_paragraphs.strip():
+        return [p.strip() for p in tailored_body_paragraphs.split("\n\n") if p.strip()]
+    if isinstance(tailored_body_paragraphs, list) and tailored_body_paragraphs:
+        return [str(p).strip() for p in tailored_body_paragraphs if str(p).strip()]
+
+    prof = profile_data.get("professional", {})
+    summary = str(prof.get("summary", "")).strip()
+    headline = str(prof.get("headline", "")).strip()
+    skills_raw = profile_data.get("skills", {})
+    skills_keys = list(skills_raw.keys()) if isinstance(skills_raw, dict) else list(skills_raw)
+    top_skills = ", ".join(str(s).strip() for s in skills_keys[:4] if str(s).strip())
+
+    if is_es:
+        intro = (
+            f"Me dirijo a ustedes con gran interés en la posición de {job_title} en {company}."
+            if company
+            else f"Me dirijo a ustedes con gran interés en la posición de {job_title}."
+        )
+        if summary:
+            body = summary
+        elif headline and top_skills:
+            body = f"Con trayectoria como {headline} y competencias en {top_skills}, aporto experiencia práctica orientada a resultados."
+        elif headline:
+            body = f"Con trayectoria profesional como {headline}, aporto experiencia y enfoque analítico al equipo."
+        elif top_skills:
+            body = f"Con competencias técnicas en {top_skills}, puedo aportar valor inmediato a los objetivos de su equipo."
+        else:
+            body = "Cuento con formación y experiencia profesional alineadas con los requerimientos de la vacante."
+        outro = (
+            "Agradezco de antemano su tiempo y consideración. Quedo a su entera disposición "
+            "para profundizar en mi trayectoria durante una entrevista."
+        )
+    else:
+        intro = (
+            f"I am writing to express my strong interest in the {job_title} role at {company}."
+            if company
+            else f"I am writing to express my strong interest in the {job_title} role."
+        )
+        if summary:
+            body = summary
+        elif headline and top_skills:
+            body = f"With my background as {headline} and practical expertise in {top_skills}, I offer proven capabilities aligned with your needs."
+        elif headline:
+            body = f"With my background as {headline}, I bring dedicated problem-solving and professional commitment to your team."
+        elif top_skills:
+            body = f"With demonstrated expertise in {top_skills}, I can deliver immediate value to your engineering initiatives."
+        else:
+            body = "My professional background and skill set align with the qualifications outlined for this position."
+        outro = (
+            "Thank you for your time and consideration. I welcome the opportunity to discuss "
+            "how my background can support your goals."
+        )
+
+    return [intro, body, outro]
+
+
+# ── HTML Renderers ───────────────────────────────────────────────────────────
 
 def render_ats_resume_html(
     profile_data: dict[str, Any] | None = None,
@@ -30,52 +249,48 @@ def render_ats_resume_html(
     custom_experience: list[dict[str, Any]] | None = None,
     language: str = "auto",
 ) -> str:
-    """Render ATS resume HTML from profile and tailored inputs."""
+    """Render ATS-compliant resume HTML from profile data and tailored inputs.
+
+    Args:
+        profile_data: Optional candidate profile dict (defaults to loaded profile).
+        resume_data: Optional plain text resume dict (defaults to loaded resume).
+        job_title: Target job title.
+        tailored_headline: Tailored professional headline.
+        tailored_summary: Tailored professional summary narrative.
+        highlighted_skills: List or dictionary of highlighted skills for the role.
+        custom_experience: Optional customized experience entries.
+        language: Language code ('en', 'es', or 'auto').
+
+    Returns:
+        Rendered HTML string.
+    """
     p = profile_data or load_profile().model_dump()
     r = resume_data or load_plain_text_resume()
 
-    personal = r.get("personal_information") or p.get("personal") or {}
-    first_name = personal.get("name") or personal.get("first_name", "")
-    last_name = personal.get("surname") or personal.get("last_name", "")
-    full_name = f"{first_name} {last_name}".strip()
-
-    loc_parts = [personal.get("city", ""), personal.get("country", "")]
-    location = ", ".join(filter(None, loc_parts))
-
-    links = p.get("links") or {}
-    linkedin = personal.get("linkedin") or links.get("linkedin", "")
-    github = personal.get("github") or links.get("github", "")
-
-    skills_list = []
-    if highlighted_skills:
-        if isinstance(highlighted_skills, list):
-            skills_list = highlighted_skills
-        elif isinstance(highlighted_skills, dict):
-            for sks in highlighted_skills.values():
-                skills_list.extend(sks)
-    elif p.get("skills"):
-        skills_list = [k.capitalize() for k in p["skills"].keys()]
+    contact = _extract_contact_info(profile_data=p, resume_data=r)
+    skills = _extract_skills(highlighted_skills=highlighted_skills, profile_skills=p.get("skills"))
 
     exp = custom_experience or r.get("experience_details") or p.get("experience") or []
     edu = r.get("education_details") or ([p["education"]] if p.get("education") else [])
 
-    is_es = language.lower() in ("es", "spanish", "español") or any(
-        w in f"{job_title} {tailored_headline}".lower() for w in ("ingeniero", "desarrollador", "remoto", "sistemas")
-    )
+    is_es = detect_is_spanish(language, job_title, tailored_headline)
+    prof = p.get("professional", {})
+    headline = tailored_headline or prof.get("headline") or job_title
+    summary = tailored_summary or prof.get("summary", "")
 
     template = _jinja_env.get_template("resume.html")
     return template.render(
         language="es" if is_es else "en",
         is_es=is_es,
-        full_name=full_name,
-        headline=tailored_headline or p.get("professional", {}).get("headline") or job_title,
-        location=location,
-        email=personal.get("email", ""),
-        phone=personal.get("phone", ""),
-        linkedin=linkedin,
-        github=github,
-        summary=tailored_summary or p.get("professional", {}).get("summary", ""),
-        skills=skills_list,
+        full_name=contact["full_name"],
+        headline=headline,
+        location=contact["location"],
+        email=contact["email"],
+        phone=contact["phone"],
+        linkedin=contact["linkedin"],
+        github=contact["github"],
+        summary=summary,
+        skills=skills,
         experience=exp,
         education=edu,
     )
@@ -89,56 +304,56 @@ def render_ats_cover_letter_html(
     tailored_body_paragraphs: list[str] | str | None = None,
     language: str = "auto",
 ) -> str:
-    """Render ATS cover letter HTML."""
+    """Render ATS-compliant cover letter HTML.
+
+    Args:
+        profile_data: Optional candidate profile dict (defaults to loaded profile).
+        job_title: Target job title.
+        company: Target hiring company name.
+        hiring_manager: Optional name of the hiring manager.
+        tailored_body_paragraphs: Custom paragraphs (list or double-newline separated string).
+        language: Language code ('en', 'es', or 'auto').
+
+    Returns:
+        Rendered HTML string.
+    """
     p = profile_data or load_profile().model_dump()
-    personal = p.get("personal", {})
-    full_name = f"{personal.get('first_name', '')} {personal.get('last_name', '')}".strip()
-
-    loc_parts = [personal.get("city", ""), personal.get("country", "")]
-    location = ", ".join(filter(None, loc_parts))
-
-    is_es = language.lower() in ("es", "spanish", "español") or any(
-        w in f"{job_title} {company}".lower() for w in ("ingeniero", "desarrollador", "remoto", "sistemas", "empresa")
-    )
+    contact = _extract_contact_info(profile_data=p)
+    is_es = detect_is_spanish(language, job_title, company)
 
     if is_es:
-        salutation = f"Estimado/a {hiring_manager}:" if hiring_manager else (f"Estimado equipo de {company}:" if company else "Estimado/a responsable de selección:")
+        salutation = (
+            f"Estimado/a {hiring_manager}:"
+            if hiring_manager
+            else (f"Estimado equipo de {company}:" if company else "Estimado/a responsable de selección:")
+        )
         signoff_text = "Atentamente,"
     else:
-        salutation = f"Dear {hiring_manager}," if hiring_manager else (f"Dear Hiring Team at {company}," if company else "Dear Hiring Manager,")
+        salutation = (
+            f"Dear {hiring_manager},"
+            if hiring_manager
+            else (f"Dear Hiring Team at {company}," if company else "Dear Hiring Manager,")
+        )
         signoff_text = "Sincerely,"
 
-    paragraphs = []
-    if isinstance(tailored_body_paragraphs, str) and tailored_body_paragraphs:
-        paragraphs = [p.strip() for p in tailored_body_paragraphs.split("\n\n") if p.strip()]
-    elif isinstance(tailored_body_paragraphs, list) and tailored_body_paragraphs:
-        paragraphs = [str(p).strip() for p in tailored_body_paragraphs if str(p).strip()]
-    else:
-        summary = p.get("professional", {}).get("summary", "").strip()
-        headline = p.get("professional", {}).get("headline", "").strip()
-        skills = list(p.get("skills", {}).keys())
-        skills_text = ", ".join(skills[:4]) if skills else ""
-
-        if is_es:
-            intro = f"Me dirijo a ustedes con gran interés en la posición de {job_title} en {company}." if company else f"Me dirijo a ustedes con gran interés en la posición de {job_title}."
-            body = summary or (f"Con experiencia como {headline} y conocimientos en {skills_text}, puedo aportar valor inmediato a los objetivos de su equipo." if headline else f"Con experiencia en {skills_text}, puedo aportar valor inmediato a los objetivos de su equipo.")
-            outro = "Agradezco su tiempo y consideración. Quedo a su entera disposición para ampliar cualquier información en una entrevista."
-            paragraphs = [intro, body, outro]
-        else:
-            intro = f"I am writing to express my strong interest in the {job_title} role at {company}." if company else f"I am writing to express my strong interest in the {job_title} role."
-            body = summary or (f"With my background as {headline} and expertise in {skills_text}, I can deliver immediate value to your team's initiatives." if headline else f"With my hands-on expertise in {skills_text}, I can deliver immediate value to your team's initiatives.")
-            outro = "Thank you for your time and consideration. I look forward to discussing how my background aligns with your goals."
-            paragraphs = [intro, body, outro]
+    paragraphs = _build_cover_letter_paragraphs(
+        tailored_body_paragraphs=tailored_body_paragraphs,
+        profile_data=p,
+        job_title=job_title,
+        company=company,
+        is_es=is_es,
+    )
 
     template = _jinja_env.get_template("cover_letter.html")
     return template.render(
         language="es" if is_es else "en",
-        full_name=full_name,
+        full_name=contact["full_name"],
         headline=p.get("professional", {}).get("headline", ""),
-        location=location,
-        email=personal.get("email", ""),
-        phone=personal.get("phone", ""),
-        linkedin=p.get("links", {}).get("linkedin", ""),
+        location=contact["location"],
+        email=contact["email"],
+        phone=contact["phone"],
+        linkedin=contact["linkedin"],
+        github=contact["github"],
         company=company,
         job_title=job_title,
         hiring_manager=hiring_manager,
@@ -147,6 +362,8 @@ def render_ats_cover_letter_html(
         signoff_text=signoff_text,
     )
 
+
+# ── PDF Generators ───────────────────────────────────────────────────────────
 
 async def generate_tailored_pdf(
     job_id: str,
@@ -158,8 +375,22 @@ async def generate_tailored_pdf(
     language: str = "auto",
     output_dir: Path | None = None,
 ) -> str:
-    """Generate ATS PDF resume and save to output/resumes/resume_{job_id}.pdf."""
-    out_dir = output_dir or (PROJECT_ROOT / "output" / "resumes")
+    """Generate ATS PDF resume and save to output/resumes/resume_{job_id}.pdf.
+
+    Args:
+        job_id: LinkedIn or target job identifier.
+        job_title: Target job title.
+        tailored_headline: Tailored headline for candidate header.
+        tailored_summary: Tailored professional summary narrative.
+        highlighted_skills: List of highlighted skills for this application.
+        custom_experience: Custom experience entries.
+        language: Target document language ('en', 'es', or 'auto').
+        output_dir: Optional custom output directory.
+
+    Returns:
+        Absolute string path to rendered PDF file.
+    """
+    out_dir = output_dir or RESUMES_OUTPUT_DIR
     out_path = out_dir / f"resume_{job_id}.pdf"
 
     html = render_ats_resume_html(
@@ -182,8 +413,21 @@ async def generate_tailored_cover_letter(
     language: str = "auto",
     output_dir: Path | None = None,
 ) -> str:
-    """Generate ATS PDF cover letter and save to output/cover_letters/cover_letter_{job_id}.pdf."""
-    out_dir = output_dir or (PROJECT_ROOT / "output" / "cover_letters")
+    """Generate ATS PDF cover letter and save to output/cover_letters/cover_letter_{job_id}.pdf.
+
+    Args:
+        job_id: LinkedIn or target job identifier.
+        job_title: Target job title.
+        company: Target hiring company name.
+        hiring_manager: Optional hiring manager name.
+        tailored_body: Paragraph list or raw body text.
+        language: Target document language ('en', 'es', or 'auto').
+        output_dir: Optional custom output directory.
+
+    Returns:
+        Absolute string path to rendered PDF file.
+    """
+    out_dir = output_dir or COVER_LETTERS_OUTPUT_DIR
     out_path = out_dir / f"cover_letter_{job_id}.pdf"
 
     html = render_ats_cover_letter_html(

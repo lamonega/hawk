@@ -3,53 +3,70 @@
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
+import importlib.util
+import sys
+from typing import Any
 
 import click
 from loguru import logger
 
-from hawk.config import CONFIG_DIR, get_settings
+from hawk.config import CONFIG_DIR, PROJECT_ROOT, get_settings
+
+
+def _setup_logging(verbose: bool) -> None:
+    """Configure application logging verbosity."""
+    logger.remove()
+    log_level = "DEBUG" if verbose else "INFO"
+    logger.add(
+        sys.stderr,
+        level=log_level,
+        format="<green>{time:HH:mm:ss}</green> | <level>{level: <8}</level> | <level>{message}</level>",
+    )
 
 
 @click.group()
 @click.option("--verbose", "-v", is_flag=True, help="Enable debug logging")
 def main(verbose: bool) -> None:
     """hawk - AI-powered LinkedIn Easy Apply job applier via MCP."""
-    logger.remove()
-    log_level = "DEBUG" if verbose else "INFO"
-    logger.add(lambda msg: click.echo(msg, err=True), level=log_level)
+    _setup_logging(verbose)
 
 
 @main.command()
 def doctor() -> None:
-    """Check hawk installation and configuration."""
+    """Check hawk installation, environment, and configuration files."""
     settings = get_settings()
-    checks = []
+    checks: list[tuple[str, bool]] = []
 
-    # Configs
-    has_settings = (CONFIG_DIR / "settings.yaml").exists() or (CONFIG_DIR / "settings.example.yaml").exists()
-    has_profile = (CONFIG_DIR / "profile.yaml").exists() or (CONFIG_DIR / "profile.example.yaml").exists()
-    has_resume = (CONFIG_DIR / "plain_text_resume.yaml").exists() or (CONFIG_DIR / "plain_text_resume.example.yaml").exists()
-    checks.append(("Settings config (settings.yaml / .example)", has_settings))
-    checks.append(("Profile config (profile.yaml / .example)", has_profile))
-    checks.append(("Resume config (plain_text_resume.yaml / .example)", has_resume))
+    # 1. Configuration files check (DRY)
+    config_targets = [
+        ("Settings", "settings.yaml", "settings.example.yaml"),
+        ("Profile", "profile.yaml", "profile.example.yaml"),
+        ("Resume", "plain_text_resume.yaml", "plain_text_resume.example.yaml"),
+    ]
+    for label, active_file, example_file in config_targets:
+        exists = (CONFIG_DIR / active_file).exists() or (CONFIG_DIR / example_file).exists()
+        checks.append((f"{label} configuration ({active_file} / .example)", exists))
 
-    # Database
-    from hawk.storage import init_db
-    init_db()
-    checks.append(("SQLite database initialized", True))
-
-    # Browser Profile
-    prof_dir = Path(settings.browser.profile_dir)
-    checks.append(("Browser profile directory", prof_dir.exists() or True))
-
-    # Playwright
+    # 2. Database connectivity check
+    db_ok = False
     try:
-        import playwright  # noqa: F401
-        checks.append(("Playwright installed", True))
-    except ImportError:
-        checks.append(("Playwright installed", False))
+        from hawk.storage import init_db
+        init_db()
+        db_ok = True
+    except Exception as exc:
+        logger.debug("Database check failed: {}", exc)
+    checks.append(("SQLite database initialized", db_ok))
 
+    # 3. Browser Profile directory check
+    prof_dir = PROJECT_ROOT / settings.browser.profile_dir
+    prof_ok = prof_dir.exists() or prof_dir.parent.exists()
+    checks.append(("Browser profile directory accessible", prof_ok))
+
+    # 4. Playwright installation check
+    has_playwright = importlib.util.find_spec("playwright") is not None
+    checks.append(("Playwright package installed", has_playwright))
+
+    # Display results
     click.echo("\n=== hawk doctor ===\n")
     for name, ok in checks:
         status = click.style("OK", fg="green") if ok else click.style("MISSING", fg="red")
@@ -63,28 +80,78 @@ def doctor() -> None:
 
 @main.command()
 def mcp() -> None:
-    """Start hawk MCP server (stdio transport)."""
+    """Start hawk MCP server with stdio transport."""
     from hawk.mcp import mcp as server
     server.run(transport="stdio")
 
 
-@main.command()
-@click.option("--jobs", "-n", default=3, type=int, help="Maximum jobs to process")
-@click.option("--dry-run/--no-dry-run", default=True, help="Enable/disable dry-run mode")
-def run(jobs: int, dry_run: bool) -> None:
-    """Execute autonomous application pipeline."""
+async def _process_job(card: dict[str, Any], dry_run: bool) -> bool:
+    """Process and apply to a single job listing.
+
+    Returns True if the application was executed, False if skipped.
+    """
     from hawk.browser import browser
-    from hawk.linkedin import search, extract_jobs_list, extract_job_details, apply_step, human_delay
+    from hawk.linkedin import apply_step, extract_job_details, human_delay
     from hawk.resume import generate_tailored_pdf
-    from hawk.storage import get_application, insert_application, increment_daily_count, get_daily_count
+    from hawk.storage import get_application, increment_daily_count, insert_application
 
-    async def _pipeline():
-        click.echo(f"Starting autonomous pipeline (max_jobs={jobs}, dry_run={dry_run})...")
-        await browser.launch(headless=get_settings().browser.headless)
+    job_id = str(card.get("job_id", "")).strip()
+    if not job_id or card.get("already_applied") or get_application(job_id):
+        return False
 
-        status = await browser.check_session()
-        if status != "logged_in":
-            click.echo(click.style("LinkedIn session not active. Please log in first via browser_session(action='wait_login').", fg="red"))
+    role = card.get("role", "Candidate")
+    company = card.get("company", "Unknown")
+    click.echo(f"Processing job: {role} at {company} ({job_id})")
+
+    link = card.get("link") or f"https://www.linkedin.com/jobs/view/{job_id}/"
+    await browser.navigate(link)
+    await human_delay()
+
+    details = await extract_job_details()
+    target_title = details.get("role") or role
+    resume_pdf = await generate_tailored_pdf(job_id=job_id, job_title=target_title)
+
+    res = await apply_step(resume_path=resume_pdf, auto_advance=True, dry_run=dry_run)
+    status = res.get("status", "applied")
+    click.echo(f"  Result: {status}")
+
+    insert_application(
+        job_id=job_id,
+        status=status,
+        dry_run=dry_run,
+        resume_path=resume_pdf,
+    )
+    if not dry_run and status == "submitted":
+        increment_daily_count()
+
+    return True
+
+
+async def _run_pipeline(max_jobs: int, dry_run: bool) -> None:
+    """Execute the full autonomous application pipeline."""
+    from hawk.browser import browser
+    from hawk.linkedin import extract_jobs_list, search
+    from hawk.storage import get_daily_count
+
+    settings = get_settings()
+
+    if not dry_run and get_daily_count() >= settings.apply.daily_max:
+        click.echo(click.style(f"Daily application limit reached ({settings.apply.daily_max}). Exiting.", fg="yellow"))
+        return
+
+    click.echo(f"Starting autonomous pipeline (max_jobs={max_jobs}, dry_run={dry_run})...")
+
+    try:
+        await browser.launch(headless=settings.browser.headless)
+
+        session_status = await browser.check_session()
+        if session_status != "logged_in":
+            click.echo(
+                click.style(
+                    "LinkedIn session not active. Please log in first via browser_session(action='wait_login').",
+                    fg="red",
+                )
+            )
             return
 
         await search()
@@ -93,33 +160,27 @@ def run(jobs: int, dry_run: bool) -> None:
 
         processed = 0
         for card in job_cards:
-            if processed >= jobs:
+            if processed >= max_jobs:
                 break
-            job_id = card.get("job_id")
-            if not job_id or card.get("already_applied") or get_application(job_id):
-                continue
+            if not dry_run and get_daily_count() >= settings.apply.daily_max:
+                click.echo(click.style("Daily application limit reached during run. Stopping.", fg="yellow"))
+                break
 
-            click.echo(f"Processing job: {card.get('role')} at {card.get('company')} ({job_id})")
-            await browser.navigate(card.get("link", f"https://www.linkedin.com/jobs/view/{job_id}/"))
-            await human_delay()
-
-            details = await extract_job_details()
-            role_name = details.get("role") or card.get("role") or "Candidate"
-            resume_pdf = await generate_tailored_pdf(job_id=job_id, job_title=role_name)
-
-            res = await apply_step(resume_path=resume_pdf, auto_advance=True, dry_run=dry_run)
-            click.echo(f"  Result: {res.get('status')}")
-
-            insert_application(job_id=job_id, status=res.get("status", "applied"), dry_run=dry_run, resume_path=resume_pdf)
-            if not dry_run and res.get("status") == "submitted":
-                increment_daily_count()
-
-            processed += 1
-            await asyncio.sleep(2.0)
+            if await _process_job(card=card, dry_run=dry_run):
+                processed += 1
+                await asyncio.sleep(2.0)
 
         click.echo(f"Pipeline complete. Processed {processed} jobs. Today's total: {get_daily_count()}")
+    finally:
+        await browser.close()
 
-    asyncio.run(_pipeline())
+
+@main.command()
+@click.option("--jobs", "-n", default=3, type=int, help="Maximum jobs to process")
+@click.option("--dry-run/--no-dry-run", default=True, help="Enable/disable dry-run mode")
+def run(jobs: int, dry_run: bool) -> None:
+    """Execute autonomous application pipeline."""
+    asyncio.run(_run_pipeline(max_jobs=jobs, dry_run=dry_run))
 
 
 if __name__ == "__main__":

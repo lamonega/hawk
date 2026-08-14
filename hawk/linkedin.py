@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import random
 from pathlib import Path
 from typing import Any
@@ -12,12 +11,176 @@ from urllib.parse import quote
 from loguru import logger
 
 from hawk.browser import browser
-from hawk.config import get_settings, load_profile, match_field
+from hawk.config import Settings, UserProfile, get_settings, load_profile, match_field
 
-EXPERIENCE_MAP = {"internship": "1", "entry": "2", "associate": "3", "mid_senior_level": "4", "director": "5", "executive": "6"}
-JOB_TYPE_MAP = {"full_time": "F", "part_time": "P", "contract": "C", "temporary": "T", "internship": "I"}
-DATE_FILTER_MAP = {"day": "r86400", "week": "r604800", "month": "r2592000"}
+# ── 1. Search & Filter Constants ──────────────────────────────────────────────
+LINKEDIN_JOBS_SEARCH_URL = "https://www.linkedin.com/jobs/search/?"
+LINKEDIN_JOB_VIEW_URL_PREFIX = "https://www.linkedin.com/jobs/view/"
 
+EXPERIENCE_MAP: dict[str, str] = {
+    "internship": "1",
+    "entry": "2",
+    "associate": "3",
+    "mid_senior_level": "4",
+    "director": "5",
+    "executive": "6",
+}
+
+JOB_TYPE_MAP: dict[str, str] = {
+    "full_time": "F",
+    "part_time": "P",
+    "contract": "C",
+    "temporary": "T",
+    "internship": "I",
+}
+
+DATE_FILTER_MAP: dict[str, str] = {
+    "day": "r86400",
+    "week": "r604800",
+    "month": "r2592000",
+}
+
+# ── 2. Delays & Timeouts ───────────────────────────────────────────────────────
+DEFAULT_ACTION_DELAY_MIN: float = 1.5
+DEFAULT_ACTION_DELAY_MAX: float = 2.5
+DEFAULT_SUBMIT_DELAY_MIN: float = 2.0
+DEFAULT_SUBMIT_DELAY_MAX: float = 3.0
+NAVIGATE_TIMEOUT_MS: int = 25000
+
+# ── 3. CSS Selectors ──────────────────────────────────────────────────────────
+EASY_APPLY_BUTTON_SELECTORS: list[str] = [
+    ".jobs-apply-button--top-card button",
+    "button.jobs-apply-button",
+    "button[aria-label*='Easy Apply']",
+    "button[aria-label*='Solicitud sencilla']",
+]
+
+CONNECT_BUTTON_SELECTORS: str = 'button:has-text("Conectar"), button:has-text("Connect")'
+ADD_NOTE_BUTTON_SELECTORS: str = 'button:has-text("Añadir nota"), button:has-text("Add a note")'
+SEND_BUTTON_SELECTORS: str = 'button:has-text("Enviar"), button:has-text("Send")'
+
+# ── 4. UI Text Indicators ─────────────────────────────────────────────────────
+EASY_APPLY_TEXT_INDICATORS: tuple[str, ...] = (
+    "easy apply",
+    "solicitud sencilla",
+    "aplicación sencilla",
+)
+
+FOLLOW_TEXT_INDICATORS: tuple[str, ...] = (
+    "follow",
+    "seguir",
+)
+
+BUTTON_ACTIONS: list[tuple[str, tuple[str, ...]]] = [
+    ("submit", ("submit", "enviar solicitud", "enviar candidatura")),
+    ("review", ("review", "revisar")),
+    ("next", ("next", "siguiente", "continue", "continuar", "avançar")),
+]
+
+AFFIRMATIVE_VALUES: tuple[str, ...] = ("yes", "sí", "si", "true", "1")
+NEGATIVE_VALUES: tuple[str, ...] = ("no", "false", "0")
+
+
+# ── Helper Functions ──────────────────────────────────────────────────────────
+
+def _is_job_allowed(job: dict[str, Any], settings: Settings) -> bool:
+    """Check whether a job matches blacklist constraints."""
+    company = job.get("company", "").lower()
+    role = job.get("role", "").lower()
+    location = job.get("location", "").lower()
+
+    if any(b.lower() in company for b in settings.linkedin.company_blacklist if b):
+        return False
+    if any(b.lower() in role for b in settings.linkedin.title_blacklist if b):
+        return False
+    if any(b.lower() in location for b in settings.linkedin.location_blacklist if b):
+        return False
+    return True
+
+
+async def _uncheck_follow_company(elements: list[dict[str, Any]]) -> None:
+    """Automatically uncheck 'Follow company' checkboxes in Easy Apply modals."""
+    for el in elements:
+        name = el.get("name", "").lower()
+        if any(indicator in name for indicator in FOLLOW_TEXT_INDICATORS):
+            if el.get("type") == "checkbox" and el.get("value") not in ("false", "0", ""):
+                await browser.interact(el["index"], "click")
+
+
+async def _autofill_element(
+    el: dict[str, Any],
+    profile: UserProfile,
+    resume_path: str | None,
+) -> dict[str, str] | None:
+    """Autofill a single form element using candidate profile data."""
+    tag = el.get("tag", "")
+    role = el.get("role", "")
+    name = el.get("name", "")
+    el_type = el.get("type", "")
+    current_val = el.get("value", "")
+    index = el.get("index")
+
+    if index is None:
+        return None
+
+    # File upload (Resume PDF)
+    if el_type == "file" and resume_path and Path(resume_path).exists():
+        res = await browser.interact(index, "upload", resume_path)
+        if "uploaded" in res:
+            return {"field": "resume", "value": resume_path}
+        return None
+
+    # Dropdowns / Selects / Comboboxes
+    if tag == "select" or role == "combobox":
+        answer = match_field(name, profile)
+        if answer:
+            res = await browser.interact(index, "select", str(answer))
+            if "selected" in res:
+                return {"field": name, "value": str(answer)}
+        return None
+
+    # Radio Buttons
+    if el_type == "radio":
+        answer = match_field(name, profile)
+        if answer:
+            ans_lower = answer.lower().strip()
+            name_lower = name.lower().strip()
+            is_aff_answer = any(v in ans_lower for v in AFFIRMATIVE_VALUES)
+            is_neg_answer = any(v in ans_lower for v in NEGATIVE_VALUES)
+            is_aff_label = any(v in name_lower for v in AFFIRMATIVE_VALUES)
+            is_neg_label = any(v in name_lower for v in NEGATIVE_VALUES)
+
+            should_click = (is_aff_answer and is_aff_label) or (is_neg_answer and is_neg_label)
+            if should_click:
+                await browser.interact(index, "click")
+                return {"field": name, "value": "Yes" if is_aff_answer else "No"}
+        return None
+
+    # Text Inputs & Textareas
+    if (tag in ("input", "textarea") or role == "textbox") and not current_val:
+        answer = match_field(name, profile)
+        if answer:
+            res = await browser.interact(index, "type", str(answer))
+            if "typed" in res:
+                return {"field": name, "value": str(answer)}
+
+    return None
+
+
+def _detect_action_button(
+    elements: list[dict[str, Any]],
+) -> tuple[str | None, dict[str, Any] | None]:
+    """Identify the primary step advancement button in priority order (submit, review, next)."""
+    for action, keywords in BUTTON_ACTIONS:
+        for el in elements:
+            if el.get("role") == "button":
+                name = el.get("name", "").lower()
+                if any(kw in name for kw in keywords):
+                    return action, el
+    return None, None
+
+
+# ── Core Public API ───────────────────────────────────────────────────────────
 
 def build_search_url(
     positions: str | list[str] | None = None,
@@ -50,7 +213,7 @@ def build_search_url(
         params.append(f"f_TPR={date_code}")
 
     params.append(f"distance={settings.linkedin.distance}")
-    return f"https://www.linkedin.com/jobs/search/?{'&'.join(params)}"
+    return f"{LINKEDIN_JOBS_SEARCH_URL}{'&'.join(params)}"
 
 
 async def human_delay(min_s: float | None = None, max_s: float | None = None) -> None:
@@ -60,28 +223,36 @@ async def human_delay(min_s: float | None = None, max_s: float | None = None) ->
     await asyncio.sleep(delay)
 
 
-async def search(positions: str | list[str] | None = None, locations: str | list[str] | None = None, easy_apply: bool = True) -> str:
+async def search(
+    positions: str | list[str] | None = None,
+    locations: str | list[str] | None = None,
+    easy_apply: bool = True,
+) -> str:
     """Navigate to LinkedIn search with configured parameters."""
-    url = build_search_url(positions, locations, easy_apply)
+    url = build_search_url(positions=positions, locations=locations, easy_apply=easy_apply)
     return await browser.navigate(url)
 
 
 async def extract_jobs_list() -> list[dict[str, Any]]:
-    """Extract job listings from search results (supports standard & 2026 SDUI DOMs)."""
+    """Extract job listings from search results (supporting standard DOM and 2026 SDUI DOM)."""
     page = browser.get_page()
     if not page:
         return []
 
     try:
-        jobs = await page.evaluate(r"""
+        jobs: list[dict[str, Any]] = await page.evaluate(r"""
         () => {
             const results = [];
             const seen = new Set();
 
             // Strategy 1: Standard job card selectors
-            const cards = document.querySelectorAll('.job-card-container, .jobs-search-results__list-item, [data-job-id], [data-occludable-job-id]');
+            const cards = document.querySelectorAll(
+                '.job-card-container, .jobs-search-results__list-item, [data-job-id], [data-occludable-job-id]'
+            );
             for (const card of cards) {
-                const id = card.getAttribute('data-job-id') || card.getAttribute('data-occludable-job-id') || card.getAttribute('data-entity-urn')?.split(':').pop() || '';
+                const id = card.getAttribute('data-job-id') ||
+                           card.getAttribute('data-occludable-job-id') ||
+                           card.getAttribute('data-entity-urn')?.split(':').pop() || '';
                 if (!id || seen.has(id)) continue;
                 seen.add(id);
 
@@ -91,14 +262,15 @@ async def extract_jobs_list() -> list[dict[str, Any]]:
                 const easyBadge = card.querySelector('.job-card-container__easy-apply-label, [data-easy-apply-badge]');
                 const appliedEl = card.querySelector('[aria-label*="Applied"], .artdeco-inline-feedback, [aria-label*="Solicitado"]');
                 const linkEl = card.querySelector('a[href*="/jobs/view/"]');
+                const text = card.innerText || '';
 
                 results.push({
                     job_id: id,
                     role: titleEl?.innerText?.trim() || '',
                     company: companyEl?.innerText?.trim() || '',
                     location: locEl?.innerText?.trim() || '',
-                    easy_apply: !!easyBadge || (card.innerText || '').includes('Solicitud sencilla') || (card.innerText || '').includes('Easy Apply'),
-                    already_applied: !!appliedEl && ((appliedEl.innerText || '').includes('Solicitado') || (appliedEl.innerText || '').includes('Applied')),
+                    easy_apply: !!easyBadge || text.includes('Solicitud sencilla') || text.includes('Easy Apply'),
+                    already_applied: !!appliedEl && (appliedEl.innerText || '').match(/solicitado|applied/i) !== null,
                     link: linkEl ? linkEl.href : `https://www.linkedin.com/jobs/view/${id}/`,
                 });
             }
@@ -122,7 +294,7 @@ async def extract_jobs_list() -> list[dict[str, Any]]:
                         company: lines[1] || '',
                         location: lines[2] || '',
                         easy_apply: text.includes('Solicitud sencilla') || text.includes('Easy Apply'),
-                        already_applied: text.includes('Candidatura enviada') || text.includes('Applied'),
+                        already_applied: text.includes('Candidatura enviada') || text.includes('Applied') || text.includes('Solicitado'),
                         link: `https://www.linkedin.com/jobs/view/${id}/`,
                     });
                 }
@@ -131,21 +303,8 @@ async def extract_jobs_list() -> list[dict[str, Any]]:
         }
         """)
 
-        # Filter against blacklists
         settings = get_settings()
-        filtered = []
-        for j in jobs:
-            comp = j.get("company", "").lower()
-            role = j.get("role", "").lower()
-            loc = j.get("location", "").lower()
-            if any(b.lower() in comp for b in settings.linkedin.company_blacklist if b):
-                continue
-            if any(b.lower() in role for b in settings.linkedin.title_blacklist if b):
-                continue
-            if any(b.lower() in loc for b in settings.linkedin.location_blacklist if b):
-                continue
-            filtered.append(j)
-        return filtered
+        return [j for j in jobs if _is_job_allowed(j, settings)]
     except Exception as e:
         logger.warning("extract_jobs_list failed: {}", e)
         return []
@@ -158,17 +317,31 @@ async def extract_job_details() -> dict[str, Any]:
         return {}
 
     try:
-        return await page.evaluate(r"""
+        details: dict[str, Any] = await page.evaluate(r"""
         () => {
-            const titleEl = document.querySelector('.job-details-jobs-unified-top-card__job-title, h1.topcard__title, h1');
-            const companyEl = document.querySelector('.job-details-jobs-unified-top-card__company-name, .topcard__org-name-link, a[href*="/company/"]');
-            const locEl = document.querySelector('.job-details-jobs-unified-top-card__primary-description-container, .topcard__flavor--bullet');
-            const descEl = document.querySelector('.jobs-description__content, .description__text, #job-details, [data-testid="lazy-column"]');
-            const recruiterEl = document.querySelector('.hirer-card__hirer-information a, .message-the-recruiter a, [data-tracking-control-name="public_jobs_hirer-card"]');
-            const applyBtn = document.querySelector('.jobs-apply-button, button[aria-label*="Easy Apply"], button[aria-label*="Solicitud sencilla"]');
+            const titleEl = document.querySelector(
+                '.job-details-jobs-unified-top-card__job-title, h1.topcard__title, h1'
+            );
+            const companyEl = document.querySelector(
+                '.job-details-jobs-unified-top-card__company-name, .topcard__org-name-link, a[href*="/company/"]'
+            );
+            const locEl = document.querySelector(
+                '.job-details-jobs-unified-top-card__primary-description-container, .topcard__flavor--bullet'
+            );
+            const descEl = document.querySelector(
+                '.jobs-description__content, .description__text, #job-details, [data-testid="lazy-column"]'
+            );
+            const recruiterEl = document.querySelector(
+                '.hirer-card__hirer-information a, .message-the-recruiter a, [data-tracking-control-name="public_jobs_hirer-card"]'
+            );
+            const applyBtn = document.querySelector(
+                '.jobs-apply-button, button[aria-label*="Easy Apply"], button[aria-label*="Solicitud sencilla"]'
+            );
 
             const fullText = document.body.innerText || '';
-            const applied = fullText.includes('Applied') || fullText.includes('Solicitado hace') || fullText.includes('Candidatura enviada');
+            const applied = fullText.includes('Applied') ||
+                            fullText.includes('Solicitado hace') ||
+                            fullText.includes('Candidatura enviada');
 
             return {
                 role: titleEl?.innerText?.trim() || document.title,
@@ -182,6 +355,7 @@ async def extract_job_details() -> dict[str, Any]:
             };
         }
         """)
+        return details
     except Exception as e:
         logger.warning("extract_job_details failed: {}", e)
         return {}
@@ -194,27 +368,21 @@ async def click_easy_apply() -> str:
         return "error: browser not started"
 
     try:
-        # Strategy 1: Locators
-        selectors = [
-            ".jobs-apply-button--top-card button",
-            "button.jobs-apply-button",
-            "button[aria-label*='Easy Apply']",
-            "button[aria-label*='Solicitud sencilla']",
-        ]
-        for sel in selectors:
+        # Strategy 1: CSS Locators
+        for sel in EASY_APPLY_BUTTON_SELECTORS:
             btn = page.locator(sel).first
             if await btn.count() > 0 and await btn.is_visible():
                 await btn.click()
-                await human_delay(1.5, 2.5)
+                await human_delay(DEFAULT_ACTION_DELAY_MIN, DEFAULT_ACTION_DELAY_MAX)
                 return "clicked_easy_apply"
 
         # Strategy 2: Accessibility snapshot fallback
         snap = await browser.snapshot()
         for el in snap.get("elements", []):
             name = el.get("name", "").lower()
-            if el.get("role") == "button" and any(k in name for k in ("easy apply", "solicitud sencilla", "aplicación sencilla")):
+            if el.get("role") == "button" and any(k in name for k in EASY_APPLY_TEXT_INDICATORS):
                 await browser.interact(el["index"], "click")
-                await human_delay(1.5, 2.5)
+                await human_delay(DEFAULT_ACTION_DELAY_MIN, DEFAULT_ACTION_DELAY_MAX)
                 return "clicked_easy_apply"
 
         # Check if already applied
@@ -224,6 +392,7 @@ async def click_easy_apply() -> str:
 
         return "error: Easy Apply button not found"
     except Exception as e:
+        logger.warning("click_easy_apply failed: {}", e)
         return f"error: {e}"
 
 
@@ -240,87 +409,37 @@ async def apply_step(
     settings = get_settings()
     is_dry_run = dry_run if dry_run is not None else settings.apply.dry_run
     profile = load_profile()
-    filled_items = []
+    filled_items: list[dict[str, str]] = []
 
     snap = await browser.snapshot()
-    elements = snap.get("elements", [])
-    form_errors = snap.get("form_errors", [])
+    elements: list[dict[str, Any]] = snap.get("elements", [])
+    form_errors: list[str] = snap.get("form_errors", [])
 
     # 1. Uncheck "Follow company"
+    await _uncheck_follow_company(elements)
+
+    # 2. Autofill form elements
     for el in elements:
-        name = el.get("name", "").lower()
-        if "follow" in name or "seguir" in name:
-            if el.get("type") == "checkbox" and el.get("value") not in ("false", "0", ""):
-                await browser.interact(el["index"], "click")
-
-    # 2. Autofill fields
-    for el in elements:
-        tag = el.get("tag", "")
-        role = el.get("role", "")
-        name = el.get("name", "")
-        el_type = el.get("type", "")
-        current_val = el.get("value", "")
-
-        # Upload resume
-        if el_type == "file" and resume_path and Path(resume_path).exists():
-            res = await browser.interact(el["index"], "upload", resume_path)
-            if "uploaded" in res:
-                filled_items.append({"field": "resume", "value": resume_path})
-            continue
-
-        # Dropdowns
-        if tag == "select" or role == "combobox":
-            answer = match_field(name, profile)
-            if answer:
-                res = await browser.interact(el["index"], "select", str(answer))
-                if "selected" in res:
-                    filled_items.append({"field": name, "value": str(answer)})
-            continue
-
-        # Radio Buttons
-        if el_type == "radio":
-            answer = match_field(name, profile)
-            if answer and answer.lower() in ("yes", "sí", "si", "true", "1") and "yes" in name.lower() or "sí" in name.lower():
-                await browser.interact(el["index"], "click")
-                filled_items.append({"field": name, "value": "Yes"})
-            elif answer and answer.lower() in ("no", "false", "0") and "no" in name.lower():
-                await browser.interact(el["index"], "click")
-                filled_items.append({"field": name, "value": "No"})
-            continue
-
-        # Text Inputs & Textareas
-        if tag in ("input", "textarea") or role == "textbox":
-            if not current_val:
-                answer = match_field(name, profile)
-                if answer:
-                    res = await browser.interact(el["index"], "type", str(answer))
-                    if "typed" in res:
-                        filled_items.append({"field": name, "value": str(answer)})
-            continue
+        filled = await _autofill_element(el, profile, resume_path)
+        if filled:
+            filled_items.append(filled)
 
     if not auto_advance:
         return {"status": "filled", "filled": filled_items, "errors": form_errors}
 
-    # 3. Detect Submit / Review / Next button
-    submit_btn = next((e for e in elements if e.get("role") == "button" and any(k in e.get("name", "").lower() for k in ("submit", "enviar solicitud", "enviar candidatura"))), None)
-    review_btn = next((e for e in elements if e.get("role") == "button" and any(k in e.get("name", "").lower() for k in ("review", "revisar"))), None)
-    next_btn = next((e for e in elements if e.get("role") == "button" and any(k in e.get("name", "").lower() for k in ("next", "siguiente", "continue", "continuar", "avançar"))), None)
+    # 3. Detect and handle step advancement button
+    action, btn = _detect_action_button(elements)
 
-    if submit_btn:
+    if action == "submit" and btn:
         if is_dry_run:
             return {"status": "ready_to_submit_dry_run_blocked", "filled": filled_items}
-        await browser.interact(submit_btn["index"], "click")
-        await human_delay(2.0, 3.0)
+        await browser.interact(btn["index"], "click")
+        await human_delay(DEFAULT_SUBMIT_DELAY_MIN, DEFAULT_SUBMIT_DELAY_MAX)
         return {"status": "submitted", "filled": filled_items}
 
-    if review_btn:
-        await browser.interact(review_btn["index"], "click")
-        await human_delay(1.5, 2.5)
-        return {"status": "advanced", "filled": filled_items}
-
-    if next_btn:
-        await browser.interact(next_btn["index"], "click")
-        await human_delay(1.5, 2.5)
+    if action in ("review", "next") and btn:
+        await browser.interact(btn["index"], "click")
+        await human_delay(DEFAULT_ACTION_DELAY_MIN, DEFAULT_ACTION_DELAY_MAX)
         return {"status": "advanced", "filled": filled_items}
 
     return {"status": "no_advance_button", "filled": filled_items, "errors": form_errors}
@@ -333,63 +452,76 @@ def generate_recruiter_pitch(
     top_skills: list[str] | None = None,
     language: str = "auto",
 ) -> str:
-    """Generate concise LinkedIn recruiter connection note (<300 chars limit)."""
+    """Generate concise, personalized LinkedIn recruiter connection note (<300 chars limit)."""
     profile = load_profile()
-    name = profile.personal.first_name
-    skills_list = top_skills or [k.capitalize() for k in profile.skills.keys()][:3] or [profile.professional.headline]
+    name = profile.personal.first_name or "Candidate"
+
+    if top_skills:
+        skills_list = top_skills[:3]
+    elif profile.skills:
+        skills_list = [k.capitalize() for k in profile.skills.keys()][:3]
+    elif profile.professional.headline:
+        skills_list = [profile.professional.headline]
+    else:
+        skills_list = []
+
     skills_str = ", ".join(filter(None, skills_list))
 
-    is_es = language.lower() in ("es", "spanish", "español") or any(
-        w in f"{job_title} {company}".lower() for w in ("ingeniero", "desarrollador", "remoto", "sistemas")
+    is_es = language.lower() in ("es", "spanish", "español") or (
+        language == "auto"
+        and any(
+            w in f"{job_title} {company}".lower()
+            for w in ("ingeniero", "desarrollador", "remoto", "sistemas", "analista", "diseñador", "consultor")
+        )
     )
     first_name = recruiter_name.split()[0] if recruiter_name else ""
 
     if is_es:
         greeting = f"Hola {first_name}," if first_name else "Hola,"
         skills_part = f" Con experiencia en {skills_str}," if skills_str else ""
-        note = f"{greeting} me postulé a {job_title} en {company}.{skills_part} me encantaría conectar y conversar sobre cómo puedo sumar al equipo. ¡Saludos, {name}!"
+        note = f"{greeting} me postulé a {job_title} en {company}.{skills_part} Me encantaría conectar y conversar sobre cómo puedo sumar al equipo. ¡Saludos, {name}!"
     else:
         greeting = f"Hi {first_name}," if first_name else "Hi,"
-        skills_part = f" With experience in {skills_str}," if skills_str else ""
+        skills_part = f" With a background in {skills_str}," if skills_str else ""
         note = f"{greeting} I applied for the {job_title} role at {company}.{skills_part} I'd love to connect and discuss how I can contribute! Best, {name}"
 
-    return note[:299]
-        note = f"{greeting} I applied for the {job_title} role at {company}. With experience in {skills_str}, I'd love to connect and discuss how I can contribute! Best, {name}"
-
-    return note[:299]
+    return note.strip()[:299]
 
 
 async def connect_recruiter(recruiter_url: str, note: str = "", dry_run: bool = True) -> str:
-    """Send connection request to recruiter."""
+    """Send connection request to recruiter with optional personalized note."""
     page = browser.get_page()
     if not page:
         return "error: browser not started"
 
     try:
         if recruiter_url and not page.url.startswith(recruiter_url):
-            await page.goto(recruiter_url, wait_until="domcontentloaded", timeout=25000)
+            await page.goto(recruiter_url, wait_until="domcontentloaded", timeout=NAVIGATE_TIMEOUT_MS)
             await human_delay()
 
         if dry_run:
             return f"dry_run: connection note prepared for {recruiter_url} -> '{note}'"
 
-        connect_btn = page.locator('button:has-text("Conectar"), button:has-text("Connect")').first
+        connect_btn = page.locator(CONNECT_BUTTON_SELECTORS).first
         if await connect_btn.count() > 0 and await connect_btn.is_visible():
             await connect_btn.click()
             await page.wait_for_timeout(1000)
+
             if note:
-                add_note = page.locator('button:has-text("Añadir nota"), button:has-text("Add a note")').first
+                add_note = page.locator(ADD_NOTE_BUTTON_SELECTORS).first
                 if await add_note.count() > 0:
                     await add_note.click()
                     await page.locator('textarea[name="message"]').fill(note)
-                    send_btn = page.locator('button:has-text("Enviar"), button:has-text("Send")').first
+                    send_btn = page.locator(SEND_BUTTON_SELECTORS).first
                     await send_btn.click()
                     return "connection_sent_with_note"
-            send_btn = page.locator('button:has-text("Enviar"), button:has-text("Send")').first
+
+            send_btn = page.locator(SEND_BUTTON_SELECTORS).first
             if await send_btn.count() > 0:
                 await send_btn.click()
             return "connection_sent"
 
         return "error: Connect button not found"
     except Exception as e:
+        logger.warning("connect_recruiter failed: {}", e)
         return f"error connecting with recruiter: {e}"

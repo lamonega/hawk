@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import difflib
 import re
-from datetime import datetime, timezone
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -12,18 +12,83 @@ import yaml
 from loguru import logger
 from pydantic import BaseModel, Field
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-CONFIG_DIR = PROJECT_ROOT / "config"
+# ── Paths ────────────────────────────────────────────────────────────────────
 
-SETTINGS_PATH = CONFIG_DIR / "settings.yaml"
-SETTINGS_EXAMPLE_PATH = CONFIG_DIR / "settings.example.yaml"
-PROFILE_PATH = CONFIG_DIR / "profile.yaml"
-PROFILE_EXAMPLE_PATH = CONFIG_DIR / "profile.example.yaml"
-RESUME_PATH = CONFIG_DIR / "plain_text_resume.yaml"
-RESUME_EXAMPLE_PATH = CONFIG_DIR / "plain_text_resume.example.yaml"
+PROJECT_ROOT: Path = Path(__file__).resolve().parent.parent
+CONFIG_DIR: Path = PROJECT_ROOT / "config"
 
+SETTINGS_PATH: Path = CONFIG_DIR / "settings.yaml"
+SETTINGS_EXAMPLE_PATH: Path = CONFIG_DIR / "settings.example.yaml"
+PROFILE_PATH: Path = CONFIG_DIR / "profile.yaml"
+PROFILE_EXAMPLE_PATH: Path = CONFIG_DIR / "profile.example.yaml"
+RESUME_PATH: Path = CONFIG_DIR / "plain_text_resume.yaml"
+RESUME_EXAMPLE_PATH: Path = CONFIG_DIR / "plain_text_resume.example.yaml"
+
+# ── Constants & Defaults ─────────────────────────────────────────────────────
+
+DEFAULT_DISTANCE: int = 25
+DEFAULT_MIN_SCORE: int = 7
+DEFAULT_DAILY_MAX: int = 10
+DEFAULT_MIN_DELAY: float = 2.0
+DEFAULT_MAX_DELAY: float = 5.0
+DEFAULT_PROFILE_DIR: str = "profiles/linkedin"
+DEFAULT_CURRENCY: str = "USD"
+DEFAULT_TIMEZONE_OVERLAP_HOURS: int = 4
+DEFAULT_DATE_FILTER: str = "month"
+
+FUZZY_MATCH_THRESHOLD: float = 0.85
+MAX_MATCHED_STORIES: int = 3
+MIN_KEYWORD_LENGTH: int = 3
+
+LIST_SETTING_KEYS: frozenset[str] = frozenset({
+    "positions",
+    "locations",
+    "experience_levels",
+    "location_blacklist",
+    "company_blacklist",
+    "title_blacklist",
+})
+
+DEFAULT_EXPERIENCE_LEVELS: list[str] = ["entry", "associate", "mid_senior_level"]
+
+DEFAULT_JOB_TYPES: dict[str, bool] = {
+    "full_time": True,
+    "contract": False,
+    "part_time": False,
+    "temporary": False,
+    "internship": False,
+    "other": False,
+    "volunteer": False,
+}
+
+# Mapping of plain_text_resume personal keys to UserProfile attribute paths
+PERSONAL_TO_RESUME_MAP: dict[str, str] = {
+    "name": "personal.first_name",
+    "surname": "personal.last_name",
+    "city": "personal.city",
+    "country": "personal.country",
+    "zip_code": "personal.postal_code",
+    "email": "personal.email",
+    "phone": "personal.phone",
+    "github": "links.github",
+    "linkedin": "links.linkedin",
+}
+
+# Mapping of plain_text_resume education keys to UserProfile attribute paths
+EDUCATION_TO_RESUME_MAP: dict[str, str] = {
+    "education_level": "education.degree",
+    "institution": "education.school",
+    "field_of_study": "education.field",
+}
+
+_CLEAN_KEY_REGEX: re.Pattern[str] = re.compile(r"[^a-z0-9\s]")
+_WHITESPACE_REGEX: re.Pattern[str] = re.compile(r"\s+")
+
+
+# ── YAML Helpers ─────────────────────────────────────────────────────────────
 
 def _read_yaml(path: Path) -> dict[str, Any]:
+    """Read a YAML file into a dictionary, returning an empty dict on failure."""
     if not path.exists():
         return {}
     try:
@@ -35,52 +100,55 @@ def _read_yaml(path: Path) -> dict[str, Any]:
 
 
 def _write_yaml(path: Path, data: dict[str, Any]) -> None:
+    """Serialize and write a dictionary to a YAML file with unicode support."""
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         yaml.dump(data, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
 
 
-# ── Settings Models ───────────────────────────────────────────────────────────
+# ── Settings Models ──────────────────────────────────────────────────────────
 
 class LinkedInSettings(BaseModel):
+    """LinkedIn search criteria and filtering parameters."""
+
     easy_apply_only: bool = True
-    experience_levels: list[str] = ["entry", "associate", "mid_senior_level"]
-    job_types: dict[str, bool] = Field(default_factory=lambda: {
-        "full_time": True,
-        "contract": False,
-        "part_time": False,
-        "temporary": False,
-        "internship": False,
-        "other": False,
-        "volunteer": False,
-    })
-    date_filter: str = "month"
-    positions: list[str] = Field(default_factory=lambda: ["DevOps Engineer", "Cloud Engineer"])
+    experience_levels: list[str] = Field(default_factory=lambda: list(DEFAULT_EXPERIENCE_LEVELS))
+    job_types: dict[str, bool] = Field(default_factory=lambda: dict(DEFAULT_JOB_TYPES))
+    date_filter: str = DEFAULT_DATE_FILTER
+    positions: list[str] = Field(default_factory=list)
     locations: list[str] = Field(default_factory=lambda: ["remote"])
     location_blacklist: list[str] = Field(default_factory=list)
-    distance: int = 25
+    distance: int = DEFAULT_DISTANCE
     company_blacklist: list[str] = Field(default_factory=list)
     title_blacklist: list[str] = Field(default_factory=list)
 
 
 class ScoringSettings(BaseModel):
-    min_score: int = Field(default=7, ge=1, le=10)
+    """Job screening threshold settings."""
+
+    min_score: int = Field(default=DEFAULT_MIN_SCORE, ge=1, le=10)
 
 
 class ApplySettings(BaseModel):
-    daily_max: int = Field(default=10, ge=1)
-    min_delay: float = 2.0
-    max_delay: float = 5.0
+    """Rate-limiting, throttling, and safety controls for Easy Apply."""
+
+    daily_max: int = Field(default=DEFAULT_DAILY_MAX, ge=1)
+    min_delay: float = DEFAULT_MIN_DELAY
+    max_delay: float = DEFAULT_MAX_DELAY
     dry_run: bool = True
 
 
 class BrowserSettings(BaseModel):
-    profile_dir: str = "profiles/linkedin"
+    """Playwright browser execution and session persistence options."""
+
+    profile_dir: str = DEFAULT_PROFILE_DIR
     stealth: bool = True
     headless: bool = False
 
 
 class Settings(BaseModel):
+    """Root configuration aggregating all application settings."""
+
     linkedin: LinkedInSettings = Field(default_factory=LinkedInSettings)
     scoring: ScoringSettings = Field(default_factory=ScoringSettings)
     apply: ApplySettings = Field(default_factory=ApplySettings)
@@ -88,7 +156,7 @@ class Settings(BaseModel):
 
 
 _cached_settings: Settings | None = None
-_cached_settings_mtime: float = 0
+_cached_settings_mtime: float = 0.0
 
 
 def load_settings(config_dir: Path | None = None) -> Settings:
@@ -102,13 +170,13 @@ def load_settings(config_dir: Path | None = None) -> Settings:
 
 
 def get_settings() -> Settings:
-    """Get settings with automatic reload on file changes."""
+    """Get cached settings with automatic reload when the file is modified on disk."""
     global _cached_settings, _cached_settings_mtime
     target = SETTINGS_PATH if SETTINGS_PATH.exists() else SETTINGS_EXAMPLE_PATH
     try:
-        mtime = target.stat().st_mtime if target.exists() else 0
+        mtime = target.stat().st_mtime if target.exists() else 0.0
     except Exception:
-        mtime = 0
+        mtime = 0.0
 
     if _cached_settings is None or mtime > _cached_settings_mtime:
         _cached_settings = load_settings()
@@ -117,7 +185,7 @@ def get_settings() -> Settings:
 
 
 def save_settings(settings: Settings, config_dir: Path | None = None) -> None:
-    """Save settings to config/settings.yaml."""
+    """Save settings to config/settings.yaml and update cached instance."""
     global _cached_settings, _cached_settings_mtime
     cfg_dir = config_dir or CONFIG_DIR
     target = cfg_dir / "settings.yaml"
@@ -126,7 +194,27 @@ def save_settings(settings: Settings, config_dir: Path | None = None) -> None:
     try:
         _cached_settings_mtime = target.stat().st_mtime
     except Exception:
-        _cached_settings_mtime = 0
+        _cached_settings_mtime = 0.0
+
+
+def _coerce_setting_value(key: str, value: Any) -> Any:
+    """Coerce string inputs from CLI or API into appropriate types."""
+    if not isinstance(value, str):
+        return value
+
+    val_stripped = value.strip()
+    val_lower = val_stripped.lower()
+
+    if val_lower == "true":
+        return True
+    if val_lower == "false":
+        return False
+    if val_stripped.isdigit():
+        return int(val_stripped)
+    if key in LIST_SETTING_KEYS and "," in val_stripped:
+        return [item.strip() for item in val_stripped.split(",") if item.strip()]
+
+    return value
 
 
 def update_setting(field_path: str, value: Any, config_dir: Path | None = None) -> Settings:
@@ -135,25 +223,15 @@ def update_setting(field_path: str, value: Any, config_dir: Path | None = None) 
     data = settings.model_dump()
 
     parts = field_path.split(".")
-    obj = data
+    target_dict = data
     for part in parts[:-1]:
-        if part not in obj or not isinstance(obj[part], dict):
-            obj[part] = {}
-        obj = obj[part]
+        if part not in target_dict or not isinstance(target_dict[part], dict):
+            target_dict[part] = {}
+        target_dict = target_dict[part]
 
     last_key = parts[-1]
-    if isinstance(value, str):
-        val_lower = value.strip().lower()
-        if val_lower == "true":
-            value = True
-        elif val_lower == "false":
-            value = False
-        elif value.isdigit():
-            value = int(value)
-        elif "," in value and last_key in ("positions", "locations", "experience_levels", "company_blacklist", "title_blacklist"):
-            value = [p.strip() for p in value.split(",") if p.strip()]
+    target_dict[last_key] = _coerce_setting_value(last_key, value)
 
-    obj[last_key] = value
     new_settings = Settings(**data)
     save_settings(new_settings, config_dir)
     return new_settings
@@ -162,6 +240,8 @@ def update_setting(field_path: str, value: Any, config_dir: Path | None = None) 
 # ── Profile Models ────────────────────────────────────────────────────────────
 
 class PersonalInfo(BaseModel):
+    """Candidate personal and contact details."""
+
     first_name: str = ""
     last_name: str = ""
     email: str = ""
@@ -173,6 +253,8 @@ class PersonalInfo(BaseModel):
 
 
 class Links(BaseModel):
+    """Professional online profile links."""
+
     linkedin: str = ""
     github: str = ""
     portfolio: str = ""
@@ -180,6 +262,8 @@ class Links(BaseModel):
 
 
 class ProfessionalInfo(BaseModel):
+    """High-level professional background and career positioning."""
+
     headline: str = ""
     summary: str = ""
     years_of_experience: str = ""
@@ -188,6 +272,8 @@ class ProfessionalInfo(BaseModel):
 
 
 class WorkAuthorization(BaseModel):
+    """Legal right to work and visa requirements."""
+
     authorized: bool = True
     sponsorship_required: bool = False
     country: str = ""
@@ -195,6 +281,8 @@ class WorkAuthorization(BaseModel):
 
 
 class Education(BaseModel):
+    """Academic background and degree credentials."""
+
     degree: str = ""
     field: str = ""
     school: str = ""
@@ -202,20 +290,26 @@ class Education(BaseModel):
 
 
 class Salary(BaseModel):
+    """Compensation expectations and flexibility."""
+
     current: str = ""
     expected: str = ""
-    currency: str = "USD"
+    currency: str = DEFAULT_CURRENCY
     negotiable: bool = True
 
 
 class Preferences(BaseModel):
+    """Job search availability and working preferences."""
+
     remote_only: bool = True
     min_salary: str = ""
-    notice_period: str = "2 weeks"
-    start_date: str = "Immediately"
+    notice_period: str = ""
+    start_date: str = ""
 
 
 class ProjectStory(BaseModel):
+    """STAR format grounded project story used for screening questions and interview pitches."""
+
     name: str = ""
     company_or_context: str = ""
     challenge: str = ""
@@ -225,14 +319,18 @@ class ProjectStory(BaseModel):
 
 
 class ScreeningPreferences(BaseModel):
+    """Pre-qualification criteria for automated screening decisions."""
+
     b2b_contractor_ok: bool = True
     us_work_auth: bool = False
     requires_sponsorship: bool = False
-    timezone_overlap_hours: int = 4
+    timezone_overlap_hours: int = DEFAULT_TIMEZONE_OVERLAP_HOURS
     willing_to_relocate: bool = False
 
 
 class UserProfile(BaseModel):
+    """Comprehensive candidate profile used for autofill, tailoring, and ATS generation."""
+
     completed_at: str = ""
     personal: PersonalInfo = Field(default_factory=PersonalInfo)
     links: Links = Field(default_factory=Links)
@@ -254,96 +352,28 @@ def load_profile(path: Path | None = None) -> UserProfile:
     if path is None:
         path = PROFILE_PATH if PROFILE_PATH.exists() else PROFILE_EXAMPLE_PATH
     data = _read_yaml(path)
-    # Ensure nested collections are not None
-    for k in ("skills", "languages", "common_answers"):
-        if data.get(k) is None:
-            data[k] = {}
-    for k in ("experience", "project_stories"):
-        if data.get(k) is None:
-            data[k] = []
+
+    # Ensure nested dictionary and list collections default properly
+    for dict_key in ("skills", "languages", "common_answers"):
+        if data.get(dict_key) is None:
+            data[dict_key] = {}
+    for list_key in ("experience", "project_stories"):
+        if data.get(list_key) is None:
+            data[list_key] = []
+
     return UserProfile(**data)
 
 
 def save_profile(profile: UserProfile, path: Path | None = None, sync_resume: bool = True) -> None:
-    """Save user profile to YAML and synchronize plain text resume."""
-    path = path or PROFILE_PATH
-    _write_yaml(path, profile.model_dump())
+    """Save user profile to YAML and optionally synchronize plain text resume."""
+    target_path = path or PROFILE_PATH
+    _write_yaml(target_path, profile.model_dump())
     if sync_resume:
         sync_profile_to_resume(profile)
 
 
-def sync_profile_to_resume(profile: UserProfile, resume_path: Path | None = None) -> None:
-    """Synchronize UserProfile into plain_text_resume.yaml."""
-    resume_path = resume_path or RESUME_PATH
-    target = resume_path if resume_path.exists() else (resume_path.parent / "plain_text_resume.example.yaml")
-    data = _read_yaml(target)
-
-    personal = data.get("personal_information") or {}
-    if profile.personal.first_name:
-        personal["name"] = profile.personal.first_name
-    if profile.personal.last_name:
-        personal["surname"] = profile.personal.last_name
-    if profile.personal.city:
-        personal["city"] = profile.personal.city
-    if profile.personal.country:
-        personal["country"] = profile.personal.country
-    if profile.personal.postal_code:
-        personal["zip_code"] = profile.personal.postal_code
-    if profile.personal.email:
-        personal["email"] = profile.personal.email
-    if profile.personal.phone:
-        personal["phone"] = profile.personal.phone
-    if profile.links.github:
-        personal["github"] = profile.links.github
-    if profile.links.linkedin:
-        personal["linkedin"] = profile.links.linkedin
-    data["personal_information"] = personal
-
-    if profile.education.degree or profile.education.school:
-        edu_list = data.get("education_details") or [{}]
-        edu = edu_list[0] if isinstance(edu_list[0], dict) else {}
-        if profile.education.degree:
-            edu["education_level"] = profile.education.degree
-        if profile.education.school:
-            edu["institution"] = profile.education.school
-        if profile.education.field:
-            edu["field_of_study"] = profile.education.field
-        if profile.education.graduation_year:
-            try:
-                edu["year_of_completion"] = int(profile.education.graduation_year)
-            except ValueError:
-                edu["year_of_completion"] = profile.education.graduation_year
-        edu_list[0] = edu
-        data["education_details"] = edu_list
-
-    if profile.experience:
-        data["experience_details"] = profile.experience
-    elif profile.professional.current_title or profile.professional.current_company:
-        exp_list = data.get("experience_details") or [{}]
-        exp = exp_list[0] if isinstance(exp_list[0], dict) else {}
-        if profile.professional.current_title:
-            exp["position"] = profile.professional.current_title
-        if profile.professional.current_company:
-            exp["company"] = profile.professional.current_company
-        if profile.professional.summary:
-            exp["key_responsibilities"] = [{"description": profile.professional.summary}]
-        exp_list[0] = exp
-        data["experience_details"] = exp_list
-
-    if profile.languages:
-        data["languages"] = [
-            {"language": lang.capitalize(), "proficiency": str(lvl)}
-            for lang, lvl in profile.languages.items()
-        ]
-
-    for key in ("projects", "achievements", "certifications", "interests"):
-        data.setdefault(key, [])
-
-    _write_yaml(resume_path, data)
-
-
 def get_profile_value(profile: UserProfile, field_path: str) -> str:
-    """Retrieve string value from profile using dot-notation."""
+    """Retrieve string value from profile using dot-notation (e.g. 'personal.first_name')."""
     parts = field_path.split(".")
     obj: Any = profile
     for part in parts:
@@ -358,9 +388,69 @@ def get_profile_value(profile: UserProfile, field_path: str) -> str:
     return str(obj) if obj is not None else ""
 
 
+def sync_profile_to_resume(profile: UserProfile, resume_path: Path | None = None) -> None:
+    """Synchronize UserProfile into plain_text_resume.yaml following DRY principles."""
+    target_path = resume_path or RESUME_PATH
+    source = target_path if target_path.exists() else (target_path.parent / "plain_text_resume.example.yaml")
+    data = _read_yaml(source)
+
+    # 1. Sync personal information
+    personal = data.get("personal_information") or {}
+    for resume_key, profile_key in PERSONAL_TO_RESUME_MAP.items():
+        val = get_profile_value(profile, profile_key)
+        if val:
+            personal[resume_key] = val
+    data["personal_information"] = personal
+
+    # 2. Sync education details
+    if profile.education.degree or profile.education.school:
+        edu_list = data.get("education_details") or [{}]
+        edu = edu_list[0] if isinstance(edu_list[0], dict) else {}
+        for resume_key, profile_key in EDUCATION_TO_RESUME_MAP.items():
+            val = get_profile_value(profile, profile_key)
+            if val:
+                edu[resume_key] = val
+
+        if profile.education.graduation_year:
+            grad_year = profile.education.graduation_year.strip()
+            edu["year_of_completion"] = int(grad_year) if grad_year.isdigit() else grad_year
+
+        edu_list[0] = edu
+        data["education_details"] = edu_list
+
+    # 3. Sync experience details
+    if profile.experience:
+        data["experience_details"] = profile.experience
+    elif profile.professional.current_title or profile.professional.current_company:
+        exp_list = data.get("experience_details") or [{}]
+        exp = exp_list[0] if isinstance(exp_list[0], dict) else {}
+        if profile.professional.current_title:
+            exp["position"] = profile.professional.current_title
+        if profile.professional.current_company:
+            exp["company"] = profile.professional.current_company
+        if profile.professional.summary:
+            exp["key_responsibilities"] = [{"description": profile.professional.summary}]
+        exp_list[0] = exp
+        data["experience_details"] = exp_list
+
+    # 4. Sync languages
+    if profile.languages:
+        data["languages"] = [
+            {"language": lang.capitalize(), "proficiency": str(lvl)}
+            for lang, lvl in profile.languages.items()
+        ]
+
+    # Ensure required plain text resume lists exist
+    for key in ("projects", "achievements", "certifications", "interests"):
+        data.setdefault(key, [])
+
+    _write_yaml(target_path, data)
+
+
 # ── Field Matching & Knowledge Base ──────────────────────────────────────────
 
-_MATCH_RULES = [
+# Compiled match pattern definitions
+_MATCH_PATTERNS: list[tuple[str, str]] = [
     (r"first\s*name|primer\s*nombre|nombre(?!\s*completo)", "personal.first_name"),
     (r"last\s*name|surname|family\s*name|apellido", "personal.last_name"),
     (r"full\s*name|nombre\s*completo", "_full_name"),
@@ -390,39 +480,46 @@ _MATCH_RULES = [
     (r"remote|remoto", "_preferences_remote"),
 ]
 
+_COMPILED_MATCH_RULES: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(pattern, re.IGNORECASE), target_key)
+    for pattern, target_key in _MATCH_PATTERNS
+]
+
+# Resolvers for computed/composite target fields
+_COMPUTED_FIELD_RESOLVERS: dict[str, Callable[[UserProfile], str | None]] = {
+    "_full_name": lambda p: f"{p.personal.first_name} {p.personal.last_name}".strip() or None,
+    "_auth_authorized": lambda p: "Yes" if p.work_authorization.authorized else "No",
+    "_auth_sponsorship": lambda p: "Yes" if p.work_authorization.sponsorship_required else "No",
+    "_preferences_remote": lambda p: "Yes" if p.preferences.remote_only else "No",
+}
+
 
 def match_field(question: str, profile: UserProfile) -> str | None:
-    """Match a form label or question to a profile field value."""
+    """Match a form label or application question to an accurate profile field value."""
     q = question.lower().strip()
 
     # 1. Exact & Fuzzy matching in learned common answers
     for pattern, answer in profile.common_answers.items():
         p = pattern.lower().strip()
-        if p == q or difflib.SequenceMatcher(None, p, q).ratio() > 0.85:
+        if p == q or difflib.SequenceMatcher(None, p, q).ratio() > FUZZY_MATCH_THRESHOLD:
             return answer
 
-    # 2. Rule-based regex matching
-    for regex_pat, target_key in _MATCH_RULES:
-        if re.search(regex_pat, q, re.IGNORECASE):
-            if target_key == "_full_name":
-                return f"{profile.personal.first_name} {profile.personal.last_name}".strip() or None
-            if target_key == "_auth_authorized":
-                return "Yes" if profile.work_authorization.authorized else "No"
-            if target_key == "_auth_sponsorship":
-                return "Yes" if profile.work_authorization.sponsorship_required else "No"
-            if target_key == "_preferences_remote":
-                return "Yes" if profile.preferences.remote_only else "No"
+    # 2. Rule-based pre-compiled regex matching
+    for pattern, target_key in _COMPILED_MATCH_RULES:
+        if pattern.search(q):
+            if target_key in _COMPUTED_FIELD_RESOLVERS:
+                return _COMPUTED_FIELD_RESOLVERS[target_key](profile)
 
             val = get_profile_value(profile, target_key)
             if val:
                 return val
 
-    # 3. Skills match (e.g. "How many years of Python?")
+    # 3. Skills match (e.g. "How many years of Python experience do you have?")
     for skill_name, years in profile.skills.items():
         if skill_name.lower() in q:
             return str(years)
 
-    # 4. Languages match
+    # 4. Languages match (e.g. "English proficiency level")
     for lang, level in profile.languages.items():
         if lang.lower() in q:
             return level
@@ -431,21 +528,35 @@ def match_field(question: str, profile: UserProfile) -> str | None:
 
 
 def learn_answer(profile: UserProfile, question: str, answer: str) -> UserProfile:
-    """Cache question and answer pair into common_answers."""
-    key = re.sub(r"\s+", " ", re.sub(r"[^a-z0-9\s]", "", question.lower())).strip()
+    """Cache question and answer pair into profile common_answers for future reuse."""
+    clean_q = _CLEAN_KEY_REGEX.sub("", question.lower())
+    key = _WHITESPACE_REGEX.sub(" ", clean_q).strip()
     if key and answer:
         profile.common_answers[key] = answer
     return profile
 
 
 def query_knowledge_base(profile: UserProfile, query: str) -> dict[str, Any]:
-    """Retrieve grounded candidate context and STAR project stories for answers."""
-    tokens = set(re.findall(r"\w+", query.lower()))
-    stories = []
+    """Retrieve grounded candidate context and ranked STAR project stories for screening queries."""
+    query_tokens = {
+        token
+        for token in re.findall(r"\w+", query.lower())
+        if len(token) >= MIN_KEYWORD_LENGTH
+    }
+
+    stories: list[dict[str, Any]] = []
     for story in profile.project_stories:
-        text = f"{story.name} {story.company_or_context} {story.challenge} {story.action} {' '.join(story.tech_stack)} {story.result_metrics}".lower()
-        score = sum(1 for t in tokens if len(t) > 2 and t in text)
-        if score > 0 or not tokens:
+        story_content = " ".join([
+            story.name,
+            story.company_or_context,
+            story.challenge,
+            story.action,
+            " ".join(story.tech_stack),
+            story.result_metrics,
+        ]).lower()
+
+        score = sum(1 for token in query_tokens if token in story_content)
+        if score > 0 or not query_tokens:
             stories.append({
                 "name": story.name,
                 "context": story.company_or_context,
@@ -455,21 +566,38 @@ def query_knowledge_base(profile: UserProfile, query: str) -> dict[str, Any]:
                 "result": story.result_metrics,
                 "relevance": score,
             })
+
     stories.sort(key=lambda s: s["relevance"], reverse=True)
 
-    matched_skills = {k: v for k, v in profile.skills.items() if any(t in k.lower() for t in tokens if len(t) > 2)}
+    matched_skills = {
+        skill_name: years
+        for skill_name, years in profile.skills.items()
+        if any(token in skill_name.lower() for token in query_tokens)
+    }
+
+    # Format education text cleanly
+    edu_parts = [
+        f"{profile.education.degree} in {profile.education.field}"
+        if profile.education.degree and profile.education.field
+        else (profile.education.degree or profile.education.field),
+        f"({profile.education.school})" if profile.education.school else "",
+    ]
+    formatted_education = " ".join(filter(None, edu_parts)).strip()
+
+    candidate_name = f"{profile.personal.first_name} {profile.personal.last_name}".strip()
+    location = f"{profile.personal.city}, {profile.personal.country}".strip(", ")
 
     return {
         "query": query,
         "direct_answer": match_field(query, profile),
         "direct_facts": {
-            "candidate_name": f"{profile.personal.first_name} {profile.personal.last_name}".strip(),
+            "candidate_name": candidate_name,
             "headline": profile.professional.headline,
             "years_of_experience": profile.professional.years_of_experience,
             "current_title": profile.professional.current_title,
             "current_company": profile.professional.current_company,
-            "location": f"{profile.personal.city}, {profile.personal.country}".strip(", "),
-            "education": f"{profile.education.degree} in {profile.education.field} ({profile.education.school})",
+            "location": location,
+            "education": formatted_education,
             "work_authorization": {
                 "authorized": profile.work_authorization.authorized,
                 "country": profile.work_authorization.country,
@@ -481,5 +609,5 @@ def query_knowledge_base(profile: UserProfile, query: str) -> dict[str, Any]:
             "notice_period": profile.preferences.notice_period,
         },
         "relevant_skills": matched_skills,
-        "matched_stories": stories[:3],
+        "matched_stories": stories[:MAX_MATCHED_STORIES],
     }
