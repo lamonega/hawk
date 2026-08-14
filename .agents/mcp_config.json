@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "hawk": {
+      "command": "python",
+      "args": [
+        "-m",
+        "hawk.mcp"
+      ]
+    }
+  }
+}
