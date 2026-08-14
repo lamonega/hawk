@@ -14,10 +14,7 @@ linkedin:
     volunteer: false
   date_filter: month
   positions:
-  - devops
-  - cloud engineer
-  - sre
-  - platform engineer
+  - your-job-title
   locations:
   - remote
   location_blacklist: []
