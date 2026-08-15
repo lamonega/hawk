@@ -268,6 +268,27 @@ async def browser_screenshot(output_path: str = "") -> str:
         return _error_json(str(exc), output_path=output_path)
 
 
+@mcp.tool()
+async def browser_html(selector: str = "") -> str:
+    """Inspect raw page HTML, computed CSS, and inline scripts for a CSS selector or the whole document.
+
+    Args:
+        selector: CSS selector to inspect. If empty, returns the full document body HTML.
+
+    Returns:
+        JSON string with the outerHTML, computed styles, matched CSS rules, and inline scripts.
+    """
+    try:
+        clean_selector = selector.strip()
+        res = await browser.inspect(selector=clean_selector)
+        if "error" in res and isinstance(res.get("error"), str):
+            return _error_json(res["error"], selector=clean_selector)
+        return _to_json(res)
+    except Exception as exc:
+        logger.error("browser_html failed for '{}': {}", selector, exc)
+        return _error_json(str(exc), selector=selector)
+
+
 # ── 2. LinkedIn Tools ─────────────────────────────────────────────────────────
 
 @mcp.tool()

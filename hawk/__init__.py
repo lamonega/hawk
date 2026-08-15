@@ -1,3 +1,3 @@
 """hawk - AI-powered LinkedIn Easy Apply job applier via MCP."""
 
-__version__ = "0.15.0"
+__version__ = "0.16.0"

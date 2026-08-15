@@ -1,6 +1,6 @@
 # hawk — Agent Instructions
 
-You are driving the **hawk** job application agent. hawk provides 12 high-level MCP tools
+You are driving the **hawk** job application agent. hawk provides 13 high-level MCP tools
 to automate LinkedIn Easy Apply job discovery, ATS tailored resume generation, form autofilling,
 and recruiter networking.
 
@@ -24,7 +24,7 @@ hawk/
 │   ├── resume.py                     # ATS resume & cover letter compiler
 │   ├── onboarding.py                 # Interactive onboarding wizard & CV parser
 │   ├── storage.py                    # SQLite database storage (jobs, apps, daily limits)
-│   ├── mcp.py                        # FastMCP server with 12 high-level tools
+│   ├── mcp.py                        # FastMCP server with 13 high-level tools
 │   ├── cli.py                        # CLI entrypoint (doctor, mcp, run, onboard)
 │   └── templates/                    # Jinja2 & schema templates
 │       ├── html/                     # HTML ATS templates (resume.html, cover_letter.html)
@@ -35,7 +35,7 @@ hawk/
 
 ---
 
-## The 12 Consolidated MCP Tools
+## The 13 Consolidated MCP Tools
 
 | Tool | Parameters | Description |
 |---|---|---|
@@ -44,6 +44,7 @@ hawk/
 | `browser_snapshot` | `include_hidden` | Extract accessibility DOM tree with indexed elements and error diagnostics. |
 | `browser_interact` | `element_index`, `action`, `value` | Execute atomic DOM interaction (`'click'`, `'type'`, `'select'`, `'upload'`). |
 | `browser_screenshot`| `output_path` | Capture page screenshot for debugging. |
+| `browser_html` | `selector` | Inspect raw HTML, computed CSS, and inline scripts for a CSS selector (or whole body). |
 | `linkedin_search` | `positions`, `locations`, `easy_apply` | Navigate to LinkedIn job search with preconfigured filters. |
 | `linkedin_extract` | `mode` | Extract job listings (`'jobs_list'`) or active job description (`'job_details'`). |
 | `linkedin_apply_step` | `resume_path`, `auto_advance`, `dry_run` | Autofill current Easy Apply modal step with tailored resume and advance. |

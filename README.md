@@ -56,7 +56,7 @@ hawk onboard    # Interactive wizard: import existing CV (PDF/YAML/TXT) or step-
 
 ## Key Features
 
-- **Consolidated 12 MCP Tools**: Streamlined high-level tool suite for minimal token overhead and fast agent execution.
+- **Consolidated 13 MCP Tools**: Streamlined high-level tool suite for minimal token overhead and fast agent execution.
 - **Interactive Onboarding (`hawk onboard`)**: Auto-imports text and entities from PDF/YAML/TXT resumes or runs a guided interview.
 - **Protected Personal Data**: All personal profiles and settings are stored in `data/`, fully excluded from Git.
 - **Multilingual ATS Resumes & Cover Letters**: Generates clean, ATS-compliant PDFs matching the language of the job posting via Jinja2 & Playwright.

@@ -329,14 +329,26 @@ async def _autofill_element(
 def _detect_action_button(
     elements: list[dict[str, Any]],
 ) -> tuple[str | None, dict[str, Any] | None]:
-    """Identify the primary step-advancement button in priority order (submit > review > next)."""
-    for action, keywords in BUTTON_ACTIONS:
-        for el in elements:
-            if el.get("role") == "button":
-                name = el.get("name", "").lower()
-                if any(kw in name for kw in keywords):
-                    return action, el
-    return None, None
+    """Identify the primary step-advancement button in priority order (submit > review > next).
+
+    Elements flagged as ``in_modal`` are preferred so page-level "Next" (e.g. search
+    pagination) never shadows the Easy Apply wizard's own button.
+    """
+    modal_els = [el for el in elements if el.get("in_modal")]
+
+    def _find(seq: list[dict[str, Any]]) -> tuple[str | None, dict[str, Any] | None]:
+        for action, keywords in BUTTON_ACTIONS:
+            for el in seq:
+                if el.get("role") == "button":
+                    name = el.get("name", "").lower()
+                    if any(kw in name for kw in keywords):
+                        return action, el
+        return None, None
+
+    action, btn = _find(modal_els)
+    if action and btn:
+        return action, btn
+    return _find(elements)
 
 
 # ── Core Public API ───────────────────────────────────────────────────────────

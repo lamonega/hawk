@@ -121,7 +121,7 @@ _DOM_SNAPSHOT_JS: str = r"""
         '[role="tab"]'
     ];
 
-    const MODAL_CONTAINER_SELECTOR = 'dialog[open], dialog[data-testid="dialog"], [data-testid="dialog"], [role="dialog"], .jobs-easy-apply-modal, div[data-test-modal-id="easy-apply-modal"], .artdeco-modal';
+    const MODAL_CONTAINER_SELECTOR = 'dialog[open], dialog[data-testid="dialog"], [data-testid="dialog"], [role="dialog"], .jobs-easy-apply-modal, div[data-test-modal-id="easy-apply-modal"], .artdeco-modal, [data-sdui-screen*="easyapply"]';
     const ERROR_SELECTORS = [
         '.artdeco-inline-feedback--error',
         '.fb-dash-form-element__error-text',
@@ -137,6 +137,12 @@ _DOM_SNAPSHOT_JS: str = r"""
         const rect = el.getBoundingClientRect();
         return rect.width > 0 || rect.height > 0 || el.getClientRects().length > 0;
     };
+
+    // Pick the active modal: prefer the last visible modal container (topmost / most recent).
+    const modalCandidates = Array.from(document.querySelectorAll(MODAL_CONTAINER_SELECTOR))
+        .filter(el => isElementVisible(el));
+    const modalRoot = modalCandidates.length ? modalCandidates[modalCandidates.length - 1] : null;
+    const root = modalRoot || document.body;
 
     const getElementLabel = (el) => {
         let label = el.getAttribute('aria-label') || el.innerText?.trim() || el.getAttribute('placeholder') || '';
@@ -177,7 +183,6 @@ _DOM_SNAPSHOT_JS: str = r"""
         return el.value || el.getAttribute('value') || '';
     };
 
-    const root = document.querySelector(MODAL_CONTAINER_SELECTOR) || document.body;
     const seen = new Set();
     const results = [];
     let idx = 0;
@@ -222,6 +227,7 @@ _DOM_SNAPSHOT_JS: str = r"""
                 value: val,
                 required: isRequired,
                 invalid: isInvalid,
+                in_modal: Boolean(modalRoot) && modalRoot.contains(el),
             });
         }
     }
@@ -259,6 +265,94 @@ _SELECT_OPTION_JS: str = r"""
         }
     }
     return null;
+}
+"""
+
+_INSPECT_HTML_JS: str = r"""
+(selector) => {
+    const root = document;
+    const targets = selector ? root.querySelectorAll(selector) : [root.body];
+    if (!targets.length) return { selector, found: 0, html: '', error: 'no element matches selector' };
+
+    const pick = (n, cap) => (n || '').slice(0, cap);
+
+    const getStyles = (el) => {
+        const cs = getComputedStyle(el);
+        const keys = [
+            'display', 'position', 'float', 'flexDirection', 'alignItems', 'justifyContent',
+            'margin', 'padding', 'border', 'borderRadius', 'width', 'height',
+            'background', 'background-color', 'color', 'font', 'fontSize', 'fontWeight', 'textAlign', 'cursor', 'opacity', 'visibility', 'pointer-events', 'zIndex'
+        ];
+        const out = {};
+        for (const k of keys) out[k] = cs.getPropertyValue(k);
+        return out;
+    };
+
+    const getMatchedRules = (el) => {
+        const rules = [];
+        try {
+            for (const sheet of document.styleSheets) {
+                let list;
+                try { list = sheet.cssRules; } catch (_) { continue; }
+                if (!list) continue;
+                for (const rule of list) {
+                    if (rule.selectorText && el.matches(rule.selectorText)) {
+                        rules.push(rule.selectorText);
+                    }
+                }
+            }
+        } catch (_) {}
+        return rules.slice(0, 30);
+    };
+
+    const getScripts = (el) => {
+        const scripts = [];
+        for (const s of Array.from(el.querySelectorAll('script')) ) {
+            scripts.push(pick(s.src || s.textContent.trim(), 400));
+        }
+        return scripts.slice(0, 10);
+    };
+
+    const wrap = (el) => {
+        const clone = el.cloneNode(true);
+        const tag = el.tagName.toLowerCase();
+        if (tag === 'button' || tag === 'a' || tag === 'input' || tag === 'select' || tag === 'textarea') {
+            clone.removeAttribute('data-hawk-id');
+        }
+        return clone.outerHTML;
+    };
+
+    const result = {
+        selector: selector || 'body',
+        found: targets.length,
+    };
+
+    if (targets.length === 1) {
+        const el = targets[0];
+        result.html = wrap(el);
+        result.computed = getStyles(el);
+        result.matched_css = getMatchedRules(el);
+        result.scripts = getScripts(el);
+        result.rect = (() => {
+            const r = el.getBoundingClientRect();
+            return { x: Math.round(r.x), y: Math.round(r.y), width: Math.round(r.width), height: Math.round(r.height) };
+        })();
+        return result;
+    }
+
+    result.elements = Array.from(targets).map((el, i) => ({
+        index: i,
+        tag: el.tagName.toLowerCase(),
+        id: el.id || '',
+        class: el.className?.toString().slice(0, 100) || '',
+        text: pick(el.textContent, 160),
+        html: pick(wrap(el), 800),
+        rect: (() => {
+            const r = el.getBoundingClientRect();
+            return { x: Math.round(r.x), y: Math.round(r.y), width: Math.round(r.width), height: Math.round(r.height) };
+        })(),
+    }));
+    return result;
 }
 """
 
@@ -484,6 +578,19 @@ class BrowserManager:
             }
         except Exception as e:
             logger.warning("DOM snapshot error: {}", e)
+            return {"error": str(e)}
+
+    async def inspect(self, selector: str = "") -> dict[str, Any]:
+        """Inspect raw HTML, computed CSS, and inline scripts for a CSS selector (or whole body)."""
+        page = self.get_page()
+        if not page:
+            return {"error": "browser not started"}
+
+        try:
+            clean_selector = selector.strip() if selector else ""
+            return await page.evaluate(_INSPECT_HTML_JS, clean_selector)
+        except Exception as e:
+            logger.warning("HTML inspect error: {}", e)
             return {"error": str(e)}
 
     async def interact(self, element_index: int, action: str, value: str = "") -> str:
