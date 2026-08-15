@@ -1,12 +1,12 @@
 # hawk
 
-MCP LinkedIn Easy Apply job applier — an AI agent's toolbox.
+AI-powered LinkedIn Easy Apply job application agent via MCP.
 
-hawk provides MCP tools for searching LinkedIn Easy Apply jobs, extracting details,
-screening them, generating tailored resumes, and filling Easy Apply forms. The agent
-(opencode, agy, Claude Code, etc.) is the brain; hawk is the hands.
+`hawk` provides an MCP toolkit for searching LinkedIn Easy Apply jobs, extracting descriptions, generating tailored ATS resumes & cover letters, and automating form filling. The agent (Claude, OpenCode, Antigravity, etc.) acts as the brain; hawk provides the browser automation and document compilation.
 
-## Install
+---
+
+## Installation
 
 ```bash
 git clone https://github.com/youruser/hawk.git
@@ -16,11 +16,11 @@ playwright install chromium
 hawk doctor
 ```
 
-`hawk doctor` verifies config, browser profile directory, and Playwright.
+---
 
-## MCP wiring
+## MCP Configuration
 
-Add to your agent's MCP config (e.g., `opencode.json`):
+Add hawk to your MCP client configuration (e.g. `opencode.json`):
 
 ```json
 {
@@ -34,67 +34,49 @@ Add to your agent's MCP config (e.g., `opencode.json`):
 }
 ```
 
-## First run
+---
 
-1. Launch browser: `browser_launch(headless=false)`
-2. Log in to LinkedIn **manually** in the browser window
-3. Tell the agent: "Check my session" → `browser_check_session()`
-4. The agent checks your profile → asks you to fill it (or imports from a file)
-5. Start applying: "Postulate to backend jobs in Berlin"
+## Configuration & Onboarding
 
-## Configuration
+Run the guided onboarding wizard to create your personal profile (stored in `data/`, 100% ignored in Git):
 
-| File | Purpose |
-|------|---------|
-| `config/settings.yaml` | Search filters, scoring threshold, daily caps, dry_run |
-| `config/profile.yaml` | Your personal info (auto-fills LinkedIn forms) |
-| `config/plain_text_resume.yaml` | Your resume in structured YAML |
+```bash
+hawk onboard    # Interactive wizard: import existing CV (PDF/YAML/TXT) or step-by-step interview
+```
 
-Settings auto-reload when you edit `config/settings.yaml` at runtime.
+### Directory Structure & Templates
 
-## How it works
+| File | Template | Purpose |
+|---|---|---|
+| `data/settings.yaml` | `hawk/templates/yaml/settings.example.yaml` | Search filters, rate limits, dry_run toggle |
+| `data/profile.yaml` | `hawk/templates/yaml/profile.example.yaml` | Candidate facts, STAR stories, skills |
+| `hawk/templates/html/` | `resume.html`, `cover_letter.html` | Jinja2 HTML templates for PDF rendering |
 
-- **Persistent browser profile** — login once, hawk reuses the session
-- **Agent-driven** — the LLM decides what to apply to, hawk provides tools
-- **Human-in-the-loop** — CAPTCHAs and unknown fields ask you
-- **Daily rate limits** — configurable cap (default 5/day)
-- **Dry-run mode** — test without actually submitting (default: on)
-- **Anti-detection** — stealth plugin, canvas/WebGL noise, realistic fingerprint
+---
 
-## Anti-detection
+## Key Features
 
-hawk uses multiple layers to avoid LinkedIn bot detection:
+- **Consolidated 12 MCP Tools**: Streamlined high-level tool suite for minimal token overhead and fast agent execution.
+- **Interactive Onboarding (`hawk onboard`)**: Auto-imports text and entities from PDF/YAML/TXT resumes or runs a guided interview.
+- **Protected Personal Data**: All personal profiles and settings are stored in `data/`, fully excluded from Git.
+- **Multilingual ATS Resumes & Cover Letters**: Generates clean, ATS-compliant PDFs matching the language of the job posting via Jinja2 & Playwright.
+- **Stealth Browser Automation**: Anti-detection fingerprinting (canvas noise, WebGL spoofing, UA rotation, persistent session storage).
+- **Self-Healing Easy Apply Engine**: Deterministic DOM accessibility tree tagging (`data-hawk-id`) and validation recovery.
+- **Human-in-the-Loop & Rate Limits**: Configurable daily application limits and `dry_run` safety guard.
 
-- **playwright-stealth v2** — patches navigator.webdriver, chrome.runtime, plugins
-- **Canvas fingerprint noise** — subtle per-pixel noise on getImageData/toDataURL
-- **WebGL spoofing** — realistic Intel UHD 630 vendor/renderer strings
-- **AudioContext perturbation** — tiny frequency noise on oscillators
-- **Realistic user agent** — Chrome 129-131 on Windows/Mac, rotated per session
-- **Real viewport sizes** — 1920x1080, 1366x768, 1536x864
-- **Persistent profile** — cookies persist, looks like a returning user
+---
 
-## Available tools (35)
+## CLI Commands
 
-**Browser (11)** — launch, session check, navigate, snapshot, click, type, select, upload, screenshot, PDF, close
+```bash
+hawk onboard   # Interactive onboarding wizard (import CV or guided interview)
+hawk doctor    # Verify configuration files, templates, data directory, and Playwright
+hawk mcp       # Start the FastMCP server over stdio
+hawk run       # Run autonomous job application pipeline
+```
 
-**LinkedIn (10)** — search, extract job list, extract job details, Easy Apply wizard (click, detect fields, next step, submit), unfollow company, page text
+---
 
-**Storage (4)** — save jobs, record applications (with dedup), daily count, check history
+## License
 
-**Profile (6)** — read/update profile (with Pydantic validation), check completeness, learn Q&A pairs, import from file, list fields
-
-**Utility (4)** — read resume template, read settings (auto-reload), ask human
-
-## Safety
-
-- **Dry-run by default** — no applications are submitted until you set `dry_run: false`
-- **Daily cap** — defaults to 5 applications/day, configurable
-- **Human-in-the-loop** — CAPTCHAs and unknown fields always ask you
-- **No automated login** — you log in manually, hawk reuses the session
-- **Path traversal protection** — file import restricted to safe directories
-- **File size limits** — max 10MB for imported files
-
-## ⚠️ Disclaimer
-
-Automating LinkedIn may violate their Terms of Service (Section 8.2). Use at your own risk.
-hawk is designed for personal use with your own account. Always use dry-run mode first.
+MIT License. Automating LinkedIn may violate their Terms of Service. Use at your own discretion.

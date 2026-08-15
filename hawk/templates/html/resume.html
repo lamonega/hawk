@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="{{ language }}">
+<head>
+    <meta charset="UTF-8">
+    <title>{{ full_name }} - Resume</title>
+    <style>
+        @page {
+            size: A4;
+            margin: 14mm 16mm 14mm 16mm;
+        }
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            color: #111827;
+            background: #ffffff;
+            font-size: 10pt;
+            line-height: 1.42;
+            -webkit-font-smoothing: antialiased;
+            text-rendering: optimizeLegibility;
+        }
+
+        /* ── Header ─────────────────────────────────────────────── */
+        header {
+            text-align: center;
+            border-bottom: 1.5px solid #111827;
+            padding-bottom: 8px;
+            margin-bottom: 12px;
+        }
+        h1 {
+            font-size: 19pt;
+            font-weight: 700;
+            color: #111827;
+            letter-spacing: -0.3px;
+            margin-bottom: 2px;
+            text-transform: uppercase;
+        }
+        .headline {
+            font-size: 10.5pt;
+            font-weight: 600;
+            color: #2563eb;
+            margin-bottom: 4px;
+        }
+        .contact-bar {
+            font-size: 9pt;
+            color: #4b5563;
+            display: flex;
+            justify-content: center;
+            flex-wrap: wrap;
+            gap: 6px;
+        }
+        .contact-bar a {
+            color: #2563eb;
+            text-decoration: none;
+        }
+        .contact-bar span:not(:last-child)::after {
+            content: " •";
+            color: #9ca3af;
+            margin-left: 6px;
+        }
+
+        /* ── Sections ───────────────────────────────────────────── */
+        section {
+            margin-bottom: 11px;
+        }
+        h2 {
+            font-size: 10.5pt;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.6px;
+            color: #111827;
+            border-bottom: 1px solid #d1d5db;
+            padding-bottom: 2px;
+            margin-bottom: 6px;
+        }
+
+        /* ── Summary ────────────────────────────────────────────── */
+        .summary-text {
+            font-size: 9.5pt;
+            color: #374151;
+            text-align: justify;
+            line-height: 1.45;
+        }
+
+        /* ── Skills ─────────────────────────────────────────────── */
+        .skills-list {
+            font-size: 9.5pt;
+            color: #374151;
+            line-height: 1.5;
+        }
+        .skills-category {
+            margin-bottom: 3px;
+        }
+        .skills-category strong {
+            color: #111827;
+            font-weight: 600;
+        }
+
+        /* ── Experience & Education ─────────────────────────────── */
+        .entry {
+            margin-bottom: 9px;
+        }
+        .entry-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            margin-bottom: 1px;
+        }
+        .entry-title {
+            font-size: 10pt;
+            font-weight: 700;
+            color: #111827;
+        }
+        .entry-subtitle {
+            font-size: 9.5pt;
+            font-weight: 600;
+            color: #374151;
+        }
+        .entry-location {
+            font-size: 9pt;
+            color: #6b7280;
+            font-style: italic;
+        }
+        .entry-date {
+            font-size: 9pt;
+            font-weight: 500;
+            color: #4b5563;
+            text-align: right;
+            white-space: nowrap;
+        }
+
+        /* ── Bullet Points ──────────────────────────────────────── */
+        ul.bullet-list {
+            list-style-type: disc;
+            margin-left: 17px;
+            margin-top: 3px;
+        }
+        ul.bullet-list li {
+            font-size: 9.5pt;
+            color: #374151;
+            margin-bottom: 2.5px;
+            line-height: 1.4;
+            padding-left: 2px;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>{{ full_name }}</h1>
+        {% if headline %}<div class="headline">{{ headline }}</div>{% endif %}
+        <div class="contact-bar">
+            {% if location %}<span>{{ location }}</span>{% endif %}
+            {% if email %}<span><a href="mailto:{{ email }}">{{ email }}</a></span>{% endif %}
+            {% if phone %}<span>{{ phone }}</span>{% endif %}
+            {% if linkedin %}<span><a href="https://{{ linkedin.replace('https://', '') }}">{{ linkedin }}</a></span>{% endif %}
+            {% if github %}<span><a href="https://{{ github.replace('https://', '') }}">{{ github }}</a></span>{% endif %}
+        </div>
+    </header>
+
+    {% if summary %}
+    <section>
+        <h2>{% if is_es %}Resumen Profesional{% else %}Professional Summary{% endif %}</h2>
+        <p class="summary-text">{{ summary }}</p>
+    </section>
+    {% endif %}
+
+    {% if skills %}
+    <section>
+        <h2>{% if is_es %}Habilidades Técnicas{% else %}Technical Skills{% endif %}</h2>
+        <div class="skills-list">
+            <div class="skills-category">
+                <strong>{% if is_es %}Competencias Clave:{% else %}Core Competencies:{% endif %}</strong> {{ skills | join(" • ") }}
+            </div>
+        </div>
+    </section>
+    {% endif %}
+
+    {% if experience %}
+    <section>
+        <h2>{% if is_es %}Experiencia Profesional{% else %}Professional Experience{% endif %}</h2>
+        {% for exp in experience %}
+        <div class="entry">
+            <div class="entry-row">
+                <div>
+                    <span class="entry-title">{{ exp.position }}</span>
+                    {% if exp.company %}<span class="entry-subtitle"> — {{ exp.company }}</span>{% endif %}
+                </div>
+                {% if exp.employment_period %}<span class="entry-date">{{ exp.employment_period }}</span>{% endif %}
+            </div>
+            {% if exp.location %}
+            <div class="entry-row">
+                <span class="entry-location">{{ exp.location }}</span>
+            </div>
+            {% endif %}
+            {% if exp.key_responsibilities %}
+            <ul class="bullet-list">
+                {% for resp in exp.key_responsibilities %}
+                <li>{{ resp.description if resp.description is defined else resp }}</li>
+                {% endfor %}
+            </ul>
+            {% endif %}
+        </div>
+        {% endfor %}
+    </section>
+    {% endif %}
+
+    {% if education %}
+    <section>
+        <h2>{% if is_es %}Educación{% else %}Education{% endif %}</h2>
+        {% for edu in education %}
+        <div class="entry">
+            <div class="entry-row">
+                <div>
+                    <span class="entry-title">{{ edu.education_level }}{% if edu.field_of_study %} in {{ edu.field_of_study }}{% endif %}</span>
+                    {% if edu.institution %}<span class="entry-subtitle"> — {{ edu.institution }}</span>{% endif %}
+                </div>
+                {% if edu.year_of_completion %}<span class="entry-date">{{ edu.year_of_completion }}</span>{% endif %}
+            </div>
+        </div>
+        {% endfor %}
+    </section>
+    {% endif %}
+</body>
+</html>

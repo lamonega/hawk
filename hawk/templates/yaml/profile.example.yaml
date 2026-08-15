@@ -1,0 +1,97 @@
+personal:
+  first_name: Alex
+  last_name: Taylor
+  email: alex.taylor@example.com
+  phone: "+1 555 123 4567"
+  city: San Francisco
+  state: California
+  country: United States
+  postal_code: "94105"
+links:
+  linkedin: linkedin.com/in/alextaylor-example
+  github: github.com/alextaylor-example
+  portfolio: ""
+  website: ""
+professional:
+  current_company: Tech Solutions Inc.
+  current_title: DevOps Engineer
+  headline: DevOps Engineer | CI/CD | Docker | Kubernetes | Cloud Infrastructure
+  summary: DevOps Engineer with experience building CI/CD pipelines, containerizing applications with Docker, and administering Linux servers. Experienced with automated workflows, GitHub Actions, AWS cloud services, and infrastructure automation.
+  years_of_experience: "3"
+education:
+  degree: Bachelor's
+  field: Computer Science
+  school: University of Technology
+  graduation_year: "2024"
+work_authorization:
+  authorized: true
+  country: United States
+  sponsorship_required: false
+  work_status: Authorized
+screening_preferences:
+  b2b_contractor_ok: true
+  us_work_auth: true
+  requires_sponsorship: false
+  timezone_overlap_hours: 4
+  willing_to_relocate: false
+skills:
+  docker: 3
+  linux: 3
+  bash: 3
+  python: 2
+  git: 3
+  github actions: 3
+  ci/cd: 3
+  terraform: 2
+  aws: 2
+  kubernetes: 2
+languages:
+  english: Native
+  spanish: Professional
+preferences:
+  remote_only: true
+  min_salary: "5000"
+  notice_period: 2 weeks
+  start_date: Immediately
+salary:
+  currency: USD
+  current: ""
+  expected: "$6000 USD/month"
+  negotiable: true
+project_stories:
+  - name: CI/CD Pipeline Automation with GitHub Actions
+    company_or_context: Tech Solutions Inc.
+    challenge: Software deployments and releases were executed manually, resulting in downtime and configuration drift across servers.
+    action: Designed and implemented end-to-end CI/CD pipelines using GitHub Actions and self-hosted runners. Automated container builds with Docker and multi-environment deployment scripts in Bash.
+    tech_stack:
+      - GitHub Actions
+      - Docker
+      - Linux
+      - Bash
+      - Nginx
+    result_metrics: Reduced deployment times by 70% and eliminated rollback incidents due to configuration drift.
+  - name: Infrastructure as Code & Cloud Orchestration
+    company_or_context: Cloud Solutions Lab
+    challenge: Needed reproducible cloud environments for deploying containerized microservices and automated services.
+    action: Provisioned AWS infrastructure (EC2 instances, VPC networking, IAM policies, and EKS clusters) utilizing modular Terraform scripts and Docker Compose orchestration.
+    tech_stack:
+      - AWS
+      - Terraform
+      - EC2
+      - Docker
+      - Linux
+    result_metrics: Achieved fully automated infrastructure provisioning in under 5 minutes with declarative state management.
+  - name: High-Availability Reverse Proxy & Monitoring Infrastructure
+    company_or_context: Tech Solutions Inc.
+    challenge: Lack of proactive alerting and centralized traffic routing across internal services.
+    action: Configured Nginx reverse proxies with SSL termination, upstream load balancing, and integrated monitoring agents to alert on resource consumption and service health.
+    tech_stack:
+      - Nginx
+      - Nagios
+      - Linux
+      - SSL/TLS
+    result_metrics: Increased internal service uptime to 99.8% with sub-minute alert notifications for server incidents.
+common_answers:
+  are you comfortable working remotely: "Yes"
+  are you willing to work as an independent contractor b2b: "Yes"
+completed_at: "2026-01-01T00:00:00+00:00"

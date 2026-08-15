@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="{{ language }}">
+<head>
+    <meta charset="UTF-8">
+    <title>{{ full_name }} - Cover Letter</title>
+    <style>
+        @page {
+            size: A4;
+            margin: 18mm 20mm 18mm 20mm;
+        }
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            color: #111827;
+            background: #ffffff;
+            font-size: 10.5pt;
+            line-height: 1.55;
+            -webkit-font-smoothing: antialiased;
+            text-rendering: optimizeLegibility;
+        }
+
+        /* ── Header (Matches Resume) ────────────────────────────── */
+        header {
+            text-align: center;
+            border-bottom: 1.5px solid #111827;
+            padding-bottom: 8px;
+            margin-bottom: 20px;
+        }
+        h1 {
+            font-size: 19pt;
+            font-weight: 700;
+            color: #111827;
+            letter-spacing: -0.3px;
+            margin-bottom: 2px;
+            text-transform: uppercase;
+        }
+        .headline {
+            font-size: 10.5pt;
+            font-weight: 600;
+            color: #2563eb;
+            margin-bottom: 4px;
+        }
+        .contact-bar {
+            font-size: 9pt;
+            color: #4b5563;
+            display: flex;
+            justify-content: center;
+            flex-wrap: wrap;
+            gap: 6px;
+        }
+        .contact-bar a {
+            color: #2563eb;
+            text-decoration: none;
+        }
+        .contact-bar span:not(:last-child)::after {
+            content: " •";
+            color: #9ca3af;
+            margin-left: 6px;
+        }
+
+        /* ── Recipient Block ────────────────────────────────────── */
+        .recipient-block {
+            margin-bottom: 18px;
+            font-size: 10pt;
+            color: #374151;
+            line-height: 1.4;
+        }
+        .recipient-title {
+            font-weight: 600;
+            color: #111827;
+        }
+
+        /* ── Salutation & Body ───────────────────────────────────── */
+        .salutation {
+            font-size: 10.5pt;
+            font-weight: 700;
+            color: #111827;
+            margin-bottom: 14px;
+        }
+        .body-text {
+            color: #374151;
+            text-align: justify;
+        }
+        .body-text p {
+            margin-bottom: 14px;
+            line-height: 1.55;
+        }
+
+        /* ── Sign-off ───────────────────────────────────────────── */
+        .signoff-block {
+            margin-top: 24px;
+        }
+        .signoff-text {
+            font-size: 10.5pt;
+            color: #111827;
+            margin-bottom: 28px;
+        }
+        .signature-name {
+            font-size: 11pt;
+            font-weight: 700;
+            color: #111827;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>{{ full_name }}</h1>
+        {% if headline %}<div class="headline">{{ headline }}</div>{% endif %}
+        <div class="contact-bar">
+            {% if location %}<span>{{ location }}</span>{% endif %}
+            {% if email %}<span><a href="mailto:{{ email }}">{{ email }}</a></span>{% endif %}
+            {% if phone %}<span>{{ phone }}</span>{% endif %}
+            {% if linkedin %}<span><a href="https://{{ linkedin.replace('https://', '') }}">{{ linkedin }}</a></span>{% endif %}
+            {% if github %}<span><a href="https://{{ github.replace('https://', '') }}">{{ github }}</a></span>{% endif %}
+        </div>
+    </header>
+
+    <div class="recipient-block">
+        {% if hiring_manager %}<div class="recipient-title">Attn: {{ hiring_manager }}</div>{% endif %}
+        {% if company %}<div>{{ company }}</div>{% endif %}
+        <div>Application for: <strong>{{ job_title }}</strong></div>
+    </div>
+
+    <div class="salutation">{{ salutation }}</div>
+
+    <div class="body-text">
+        {% for p in paragraphs %}
+        <p>{{ p }}</p>
+        {% endfor %}
+    </div>
+
+    <div class="signoff-block">
+        <div class="signoff-text">{{ signoff_text }}</div>
+        <div class="signature-name">{{ full_name }}</div>
+    </div>
+</body>
+</html>
