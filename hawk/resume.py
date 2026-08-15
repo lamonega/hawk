@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from pathlib import Path
 import re
+from pathlib import Path
 from typing import Any
 
 from jinja2 import Environment, FileSystemLoader
@@ -11,7 +11,6 @@ from hawk.config import (
     DATA_DIR,
     PROJECT_ROOT,
     TEMPLATES_HTML_DIR,
-    _read_yaml,
     load_profile,
 )
 

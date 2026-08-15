@@ -80,7 +80,7 @@ def read_yaml(path: Path) -> dict[str, Any]:
     if not path.exists():
         return {}
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             return yaml.safe_load(f) or {}
     except Exception as e:
         logger.warning("Error reading YAML {}: {}", path, e)
@@ -397,12 +397,6 @@ def get_profile_value(profile: UserProfile, field_path: str) -> str:
     if isinstance(obj, (BaseModel, list, dict)):
         return ""
     return str(obj) if obj is not None else ""
-
-    # Ensure required plain text resume lists exist
-    for key in ("projects", "achievements", "certifications", "interests"):
-        data.setdefault(key, [])
-
-    write_yaml(target_path, data)
 
 
 # ── Field Matching & Knowledge Base ──────────────────────────────────────────

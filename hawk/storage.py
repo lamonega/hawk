@@ -6,13 +6,13 @@ import json
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from loguru import logger
 
-from hawk.config import DATA_DIR, PROJECT_ROOT
+from hawk.config import DATA_DIR
 
 __all__ = [
     "DEFAULT_APPLICATION_STATUS",
@@ -24,7 +24,6 @@ __all__ = [
     "get_daily_count",
     "get_db_path",
     "get_job",
-    "get_today_count",
     "increment_daily_count",
     "init_db",
     "insert_application",
@@ -90,12 +89,12 @@ INIT_SCHEMA_SQL: str = (
 
 def _utc_now_iso() -> str:
     """Return the current UTC timestamp as an ISO 8601 string."""
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _utc_today_str() -> str:
     """Return the current UTC date formatted as ``YYYY-MM-DD``."""
-    return datetime.now(timezone.utc).strftime(DATE_FORMAT)
+    return datetime.now(UTC).strftime(DATE_FORMAT)
 
 
 def _serialize_metadata(metadata: dict[str, Any] | None) -> str:

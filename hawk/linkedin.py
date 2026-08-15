@@ -543,7 +543,7 @@ def generate_recruiter_pitch(
     if top_skills:
         skills_list = top_skills[:MAX_PITCH_SKILLS]
     elif profile.skills:
-        skills_list = [k.capitalize() for k in profile.skills.keys()][:MAX_PITCH_SKILLS]
+        skills_list = [k.capitalize() for k in profile.skills][:MAX_PITCH_SKILLS]
     elif profile.professional.headline:
         skills_list = [profile.professional.headline]
     else:

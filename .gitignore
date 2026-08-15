@@ -24,6 +24,7 @@ log/
 data/*
 !data/.gitkeep
 config/
+PLAN.md
 
 # IDE
 .vscode/
